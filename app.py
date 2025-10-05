@@ -123,6 +123,7 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-me")
 USERS_JSON = os.path.join(DATA_DIR, "users.json")
 os.makedirs(DATA_DIR, exist_ok=True)
 
+
 # Custom Jinja filter to convert UTC → IST
 @app.template_filter("ist_time")
 def ist_time_filter(value):
@@ -513,6 +514,10 @@ def get_events_for_case(case_id, keep_na=False):
         except Exception:
             continue
     return final
+
+from modules.timeline import bp as timeline_bp
+app.register_blueprint(timeline_bp)
+
 # ---------- end helper functions ----------
 # after: from modules.timeline import bp as timeline_bp
 # BEFORE: app.register_blueprint(timeline_bp)

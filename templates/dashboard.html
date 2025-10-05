@@ -20,16 +20,46 @@
 </div>
 
 <div class="row g-3 mb-4">
+  <!-- LEFT column: Artifact count + case switcher + CoC (moved up) -->
   <div class="col-md-3">
-    <div class="card">
-      <div class="card-body">
-        <h6 class="card-subtitle mb-2"  style="color: #e6e6e6;">Artifacts</h6>
-        <h3 class="mb-0" style="color: #d7dbd9;">{{ artifact_count }}</h3>
+    <div class="d-flex flex-column gap-3">
+      <div class="card">
+        <div class="card-body">
+          <form id="case-switcher-form" class="mb-2" method="get" action="{{ url_for('dashboard') }}">
+            <div class="input-group">
+              <select id="case-switcher" name="case_id" class="form-select" onchange="document.getElementById('case-switcher-form').submit();">
+                {% if cases %}
+                  {% for c in cases %}
+                    <option value="{{ c.case_id }}" {% if c.case_id == case_id %}selected{% endif %}>{{ c.case_id }}</option>
+                  {% endfor %}
+                {% else %}
+                  <option value="{{ case_id }}" selected>{{ case_id }}</option>
+                {% endif %}
+              </select>
+              <button class="btn btn-outline-secondary" type="submit">Go</button>
+            </div>
+          </form>
+
+          <div class="d-flex gap-2">
+            <a href="{{ url_for('view_case_coc', case_id=case_id) }}" class="btn btn-outline-warning">Case CoC</a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('report') }}?case_id={{ case_id }}">Report Preview</a>
+          </div>
+        </div>
       </div>
+
+      <div class="card">
+        <div class="card-body h-100">
+          <h6 class="card-subtitle mb-2" style="color: #e6e6e6;">Artifacts</h6>
+          <h3 class="mb-0" style="color: #d7dbd9;">{{ artifact_count }}</h3>
+        </div>
+      </div>
+
+      <!-- Move case-switcher and CoC up here -->
+      
     </div>
   </div>
 
-  <div class="col-md-5">
+   <div class="col-md-5">
     <div class="card h-100" style="border-left:4px solid var(--accent);">
       <div class="card-body">
         <h6 class="card-subtitle text" style="color: #00ff88;">Suspicion Score (case)</h6>
@@ -81,29 +111,26 @@
           </div>
           <div class="mt-2"  style="color: #b9b9b9;">Editable via <code>data/weights.json</code>.</div>
         </div>
+        
+        {# Compact line chart below the score inside the same card #}
+        <div class="mt-3">
+          <canvas id="inlineScoreChart" height="80" style="width:100%;"></canvas>
+        </div>
+<p class="small text-muted mb-2" style="color:#bbb;">
+  <strong>X-axis:</strong> Artifacts (files in this case) &nbsp; • &nbsp;
+  <strong>Y-axis:</strong> Component score (0–100%) &nbsp; • &nbsp;
+  <strong>Lines:</strong> IOC, YARA, Heuristics comparison per file.
+</p>
 
       </div>
     </div>
   </div>
 
-  <div class="col-md-4">
-    <form id="case-switcher-form" class="d-inline-block mb-3" method="get" action="{{ url_for('dashboard') }}">
-      <div class="input-group" style="max-width:100%;">
-        <select id="case-switcher" name="case_id" class="form-select" onchange="document.getElementById('case-switcher-form').submit();">
-          {% if cases %}
-            {% for c in cases %}
-              <option value="{{ c.case_id }}" {% if c.case_id == case_id %}selected{% endif %}>{{ c.case_id }}</option>
-            {% endfor %}
-          {% else %}
-            <option value="{{ case_id }}" selected>{{ case_id }}</option>
-          {% endif %}
-        </select>
-        <button class="btn btn-outline-secondary" type="submit">Go</button>
-      </div>
-    </form>
+  
 
-    <div class="mt-3">
-      <a href="{{ url_for('view_case_coc', case_id=case_id) }}" class="btn btn-outline-warning">Case CoC</a>
+      <div class="mt-auto text-end">
+        <!-- Optional place for other action buttons in future -->
+      </div>
     </div>
   </div>
 </div>
@@ -274,6 +301,15 @@
       <li><strong>Weights</strong> — control relative contribution of IOC/YARA/Heuristics to final score.</li>
     </ul>
   </div>
+<!-- === Component Comparison Chart === -->
+{% if artifacts and artifacts|length > 0 %}
+<div class="card mt-4" style="background-color:#111; border:1px solid #222;">
+  <div class="card-body">
+    <h5 class="mb-3" style="color:#00ff88;">Component Comparison (IOC / YARA / Heuristics)</h5>
+    <canvas id="componentChart" height="200" style="width:100%;"></canvas>
+  </div>
+</div>
+{% endif %}
 
 {% else %}
   <div class="alert alert-warning">No artifacts found for this case. Upload one from the <a href="{{ url_for('home') }}">Upload page</a>.</div>
@@ -563,5 +599,269 @@
   window.TriageHelpers.loadCoC = loadCoC;
 })();
 </script>
+
+<!-- Chart.js (ensure this is included once; remove duplicates) -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+
+  // ---- helpers -----------------------------------------------------------
+  function safeParseAnalysis(a){
+    if(!a) return {};
+    if(typeof a === 'string'){
+      try { return JSON.parse(a); } catch(e){ return {}; }
+    }
+    if(typeof a === 'object') return a;
+    return {};
+  }
+
+  function shortLabel(name, maxLen){
+    maxLen = maxLen || 18;
+    if(!name) return '';
+    if(name.length <= maxLen) return name;
+    return name.slice(0, maxLen-2) + '…';
+  }
+
+  // ---- Inline final-score chart (small, inside suspicion card) ----------
+  (function renderInlineScoreChart(){
+    const el = document.getElementById('inlineScoreChart');
+    if(!el) return;
+    const artifacts = {{ artifacts|tojson|safe }} || [];
+
+    const labels = [];
+    const data = [];
+
+    artifacts.forEach(a => {
+      try {
+        const label = (a.saved_filename || a.original_filename || a.artifact_id || '').toString();
+        labels.push(shortLabel(label, 16));
+        let analysis = a.analysis || (typeof a.get === 'function' ? a.get('analysis') : null) || {};
+        analysis = safeParseAnalysis(analysis);
+        let final = analysis.final_score || analysis.suspicion_score || (analysis.heuristics && analysis.heuristics.suspicion_score) || 0;
+        final = (final === null || final === undefined) ? 0 : parseInt(final) || 0;
+        data.push(final);
+      } catch(e){
+        labels.push(a.artifact_id || 'unknown');
+        data.push(0);
+      }
+    });
+
+    const cfg = {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Final score',
+          data: data,
+          fill: true,
+          tension: 0.25,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          borderWidth: 2,
+          borderColor: '#00ff88',
+          backgroundColor: 'rgba(0,255,136,0.06)',
+          pointBackgroundColor: '#002b12',
+          pointBorderColor: '#00ff88',
+          pointStyle: 'rectRounded'
+        }]
+      },
+      options: {
+        elements: { line: { borderJoinStyle: 'round' } },
+        animation: { duration: 400 },
+        maintainAspectRatio: false,
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#111',
+            titleColor: '#00ff88',
+            bodyColor: '#fff',
+            callbacks: {
+              title: function(tooltipItems){
+                const i = tooltipItems[0].dataIndex;
+                return 'Artifact: ' + (labels[i] || 'unknown');
+              },
+              label: function(item){
+                return item.dataset.label + ': ' + (item.parsed.y) + '%';
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#9aa0a6', maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
+            grid: { color: 'rgba(255,255,255,0.03)' },
+            title: { display: true, text: 'Artifacts (short name)', color: '#9aa0a6' }
+          },
+          y: {
+            min: 0,
+            max: 100,
+            ticks: { color: '#9aa0a6' },
+            grid: { color: 'rgba(255,255,255,0.03)' },
+            title: { display: true, text: 'Score (%)', color: '#9aa0a6' }
+          }
+        }
+      }
+    };
+
+    try { if(window._inlineScoreChart instanceof Chart) window._inlineScoreChart.destroy(); } catch(e){}
+    window._inlineScoreChart = new Chart(el.getContext('2d'), cfg);
+  })();
+
+  // ---- Component Comparison Chart (IOC / YARA / Heuristics) -------------
+  (function renderComponentChart(){
+    const el = document.getElementById('componentChart');
+    if(!el) return;
+    const artifacts = {{ artifacts|tojson|safe }} || [];
+
+    const labels = [];
+    const iocData = [];
+    const yaraData = [];
+    const heurData = [];
+
+    artifacts.forEach(a => {
+      try {
+        const labelFull = (a.original_filename || a.saved_filename || a.artifact_id || '').toString();
+        labels.push(shortLabel(labelFull, 18));
+        let analysis = a.analysis || (typeof a.get === 'function' ? a.get('analysis') : null) || {};
+        analysis = safeParseAnalysis(analysis);
+
+        // Try a few common locations for component scores:
+        // 1) analysis.components.ioc.score   (new engine)
+        // 2) analysis.breakdown.ioc_component (legacy)
+        // 3) analysis.ioc_score or analysis.ioc_component
+        function pickComponent(obj, paths){
+          for(const p of paths){
+            const parts = p.split('.');
+            let cur = obj;
+            let ok = true;
+            for(const part of parts){
+              if(cur && (part in cur)){
+                cur = cur[part];
+              } else { ok = false; break; }
+            }
+            if(ok && (cur !== null && cur !== undefined)) return cur;
+          }
+          return 0;
+        }
+
+        const iocVal = pickComponent(analysis, [
+          'components.ioc.score',
+          'breakdown.ioc_component',
+          'ioc_component',
+          'ioc_score',
+          'components.ioc'   // might be numeric
+        ]);
+        const yaraVal = pickComponent(analysis, [
+          'components.yara.score',
+          'breakdown.yara_component',
+          'yara_component',
+          'yara_score',
+          'components.yara'
+        ]);
+        const heurVal = pickComponent(analysis, [
+          'components.heuristics.score',
+          'breakdown.heuristics_component',
+          'heuristics_component',
+          'heuristics.score',
+          'heuristics.suspicion_score',
+          'components.heuristics'
+        ]);
+
+        // parse numbers defensively
+        function toNum(v){ const n = parseFloat(v); return (isNaN(n) ? 0 : Math.max(0, Math.min(100, n))); }
+        iocData.push(toNum(iocVal));
+        yaraData.push(toNum(yaraVal));
+        heurData.push(toNum(heurVal));
+      } catch(e){
+        labels.push(a.artifact_id || 'unknown');
+        iocData.push(0); yaraData.push(0); heurData.push(0);
+      }
+    });
+
+    const cfg = {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'IOC',
+            data: iocData,
+            borderColor: '#f7c948',
+            backgroundColor: 'rgba(247,201,72,0.06)',
+            tension: 0.2,
+            pointRadius: 3,
+            borderWidth: 2
+          },
+          {
+            label: 'YARA',
+            data: yaraData,
+            borderColor: '#ff6b6b',
+            backgroundColor: 'rgba(255,107,107,0.06)',
+            tension: 0.2,
+            pointRadius: 3,
+            borderWidth: 2
+          },
+          {
+            label: 'Heuristics',
+            data: heurData,
+            borderColor: '#00ff88',
+            backgroundColor: 'rgba(0,255,136,0.06)',
+            tension: 0.2,
+            pointRadius: 3,
+            borderWidth: 2
+          }
+        ]
+      },
+      options: {
+        maintainAspectRatio: false,
+        responsive: true,
+        interaction: { mode: 'nearest', intersect: false },
+        plugins: {
+          legend: { labels: { color: '#cfd6da' } },
+          tooltip: {
+            backgroundColor: '#111',
+            titleColor: '#00ff88',
+            bodyColor: '#fff',
+            callbacks: {
+              title: function(tt){
+                const idx = tt[0].dataIndex;
+                return 'Artifact: ' + (labels[idx] || 'unknown');
+              },
+              label: function(item){
+                const meaning = {
+                  'IOC': 'Indicator of Compromise',
+                  'YARA': 'Rule-based match',
+                  'Heuristics': 'Behavior/context scoring'
+                }[item.dataset.label] || '';
+                return item.dataset.label + ': ' + item.formattedValue + '%  ' + (meaning ? '('+meaning+')' : '');
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#9aa0a6', maxRotation: 0, autoSkip: true, maxTicksLimit: 12 },
+            grid: { color: 'rgba(255,255,255,0.03)' },
+            title: { display: true, text: 'Artifacts (short name)', color: '#9aa0a6' }
+          },
+          y: {
+            min: 0, max: 100,
+            ticks: { color: '#9aa0a6' },
+            grid: { color: 'rgba(255,255,255,0.03)' },
+            title: { display: true, text: 'Component score (%)', color: '#9aa0a6' }
+          }
+        }
+      }
+    };
+
+    try { if(window._componentChart instanceof Chart) window._componentChart.destroy(); } catch(e){}
+    window._componentChart = new Chart(el.getContext('2d'), cfg);
+  })();
+
+});
+</script>
+
 
 {% endblock %}

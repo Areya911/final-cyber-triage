@@ -1534,7 +1534,6 @@ def case_events(case_id):
     return jsonify(events)
 
 @app.route("/timeline")
-@login_required
 def timeline():
     cases = list_cases()  # e.g. ["case001", "case002"]
     case_id = request.args.get("case_id", cases[0] if cases else "")

@@ -59,3 +59,8 @@ backups/
 !static/**/*.css
 !static/**/*.json
 
+
+# --- Allow frontend files ---
+!templates/**
+!static/**
+

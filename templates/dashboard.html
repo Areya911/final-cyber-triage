@@ -704,162 +704,215 @@ document.addEventListener('DOMContentLoaded', function(){
   // ---- Component Comparison Chart (IOC / YARA / Heuristics) -------------
     // ---- Component Comparison Chart (IOC / YARA / Heuristics) -------------
   (function renderComponentChart(){
-    const el = document.getElementById('componentChart');
-    if(!el) return;
-    const artifacts = {{ artifacts|tojson|safe }} || [];
+  const el = document.getElementById('componentChart');
+  if(!el) return;
+  const artifacts = {{ artifacts|tojson|safe }} || [];
 
-    const labels = [];
-    const iocData = [];
-    const yaraData = [];
-    const heurData = [];
+  const labels = [];
+  const iocData = [];
+  const yaraData = [];
+  const heurData = [];
 
-    artifacts.forEach(a => {
-      try {
-        // Use full filename for x-axis (prefer original_filename, fallback to saved_filename or artifact_id)
-        const labelFull = (a.original_filename || a.saved_filename || a.artifact_id || '').toString();
-        labels.push(labelFull);
+  function safeNum(v){
+    if(v === null || v === undefined) return 0;
+    // strip percent sign and whitespace if present
+    if(typeof v === 'string'){
+      v = v.trim().replace('%','');
+    }
+    const n = parseFloat(v);
+    return (isNaN(n) ? 0 : Math.max(0, Math.min(100, n)));
+  }
 
-        let analysis = a.analysis || (typeof a.get === 'function' ? a.get('analysis') : null) || {};
-        if(typeof analysis === 'string'){
-          try { analysis = JSON.parse(analysis); } catch(e){ analysis = {}; }
-        }
-
-        // pickComponent as before (keeps compatibility)
-        function pickComponent(obj, paths){
-          for(const p of paths){
-            const parts = p.split('.');
-            let cur = obj;
-            let ok = true;
-            for(const part of parts){
-              if(cur && (part in cur)){
-                cur = cur[part];
-              } else { ok = false; break; }
-            }
-            if(ok && (cur !== null && cur !== undefined)) return cur;
-          }
-          return 0;
-        }
-
-        const iocVal = pickComponent(analysis, [
-          'components.ioc.score',
-          'breakdown.ioc_component',
-          'ioc_component',
-          'ioc_score',
-          'components.ioc'
-        ]);
-        const yaraVal = pickComponent(analysis, [
-          'components.yara.score',
-          'breakdown.yara_component',
-          'yara_component',
-          'yara_score',
-          'components.yara'
-        ]);
-        const heurVal = pickComponent(analysis, [
-          'components.heuristics.score',
-          'breakdown.heuristics_component',
-          'heuristics_component',
-          'heuristics.score',
-          'heuristics.suspicion_score',
-          'components.heuristics'
-        ]);
-
-        function toNum(v){ const n = parseFloat(v); return (isNaN(n) ? 0 : Math.max(0, Math.min(100, n))); }
-        iocData.push(toNum(iocVal));
-        yaraData.push(toNum(yaraVal));
-        heurData.push(toNum(heurVal));
-      } catch(e){
-        labels.push(a.artifact_id || 'unknown');
-        iocData.push(0); yaraData.push(0); heurData.push(0);
+  function pickComponent(obj, paths){
+    for(const p of paths){
+      const parts = p.split('.');
+      let cur = obj;
+      let ok = true;
+      for(const part of parts){
+        if(cur && (part in cur)){
+          cur = cur[part];
+        } else { ok = false; break; }
       }
-    });
+      if(ok && (cur !== null && cur !== undefined)) return cur;
+    }
+    return null;
+  }
 
-    const cfg = {
-      type: 'line',
-      data: {
-        labels: labels,
-        datasets: [
-          {
-            label: 'IOC',
-            data: iocData,
-            borderColor: '#f7c948',
-            backgroundColor: 'rgba(247,201,72,0.06)',
-            tension: 0.2,
-            pointRadius: 3,
-            borderWidth: 2
-          },
-          {
-            label: 'YARA',
-            data: yaraData,
-            borderColor: '#ff6b6b',
-            backgroundColor: 'rgba(255,107,107,0.06)',
-            tension: 0.2,
-            pointRadius: 3,
-            borderWidth: 2
-          },
-          {
-            label: 'Heuristics',
-            data: heurData,
-            borderColor: '#00ff88',
-            backgroundColor: 'rgba(0,255,136,0.06)',
-            tension: 0.2,
-            pointRadius: 3,
-            borderWidth: 2
-          }
-        ]
-      },
-      options: {
-        maintainAspectRatio: false,
-        responsive: true,
-        interaction: { mode: 'nearest', intersect: false },
-        plugins: {
-          legend: { labels: { color: '#cfd6da' } },
-          tooltip: {
-            backgroundColor: '#111',
-            titleColor: '#00ff88',
-            bodyColor: '#fff',
-            callbacks: {
-              title: function(tt){
-                const idx = tt[0].dataIndex;
-                // show full filename in tooltip
-                return 'Artifact: ' + (labels[idx] || 'unknown');
-              },
-              label: function(item){
-                const meaning = {
-                  'IOC': 'Indicator of Compromise',
-                  'YARA': 'Rule-based match',
-                  'Heuristics': 'Behavior/context scoring'
-                }[item.dataset.label] || '';
-                return item.dataset.label + ': ' + item.formattedValue + '%  ' + (meaning ? '('+meaning+')' : '');
-              }
-            }
-          }
+  artifacts.forEach(a => {
+    try {
+      const filename = (a.original_filename || a.saved_filename || a.artifact_id || '').toString();
+      labels.push(filename);
+
+      let analysis = a.analysis || (typeof a.get === 'function' ? a.get('analysis') : null) || {};
+      if(typeof analysis === 'string'){
+        try { analysis = JSON.parse(analysis); } catch(e){ analysis = {}; }
+      }
+
+      // look for numeric component score in multiple plausible places
+      const iocRaw = pickComponent(analysis, [
+        'components.ioc.score',
+        'components.ioc',                // maybe numeric
+        'breakdown.ioc_component',
+        'ioc_component',
+        'ioc_score',
+        'analysis.components.ioc.score', // defensive
+        'analysis.breakdown.ioc_component'
+      ]);
+
+      const yaraRaw = pickComponent(analysis, [
+        'components.yara.score',
+        'components.yara',
+        'breakdown.yara_component',
+        'yara_component',
+        'yara_score'
+      ]);
+
+      const heurRaw = pickComponent(analysis, [
+        'components.heuristics.score',
+        'components.heuristics',
+        'breakdown.heuristics_component',
+        'heuristics_component',
+        'heuristics.score',
+        'heuristics.suspicion_score'
+      ]);
+
+      // fallback: if numeric not provided, infer from match counts
+      const iocMatches = (analysis.ioc_matches || analysis.iocs || analysis.ioc || []);
+      const yaraMatches = (analysis.yara_matches || analysis.yaras || analysis.yara || []);
+
+      let iocVal = safeNum(iocRaw);
+      let yaraVal = safeNum(yaraRaw);
+      let heurVal = safeNum(heurRaw);
+
+      // if explicit score missing for IOC/YARA, but there are matches, produce a reasonable heuristic
+      if(iocVal === 0 && Array.isArray(iocMatches) && iocMatches.length > 0){
+        // basic heuristic: more matches -> higher score (caps at 70)
+        iocVal = Math.min(70, 8 + iocMatches.length * 14);
+      }
+      if(yaraVal === 0 && Array.isArray(yaraMatches) && yaraMatches.length > 0){
+        // YARA rules are often more severe; give a fallback boost
+        yaraVal = Math.min(90, 12 + yaraMatches.length * 18);
+      }
+
+      // heuristics often present as a number; if missing, keep 0
+      heurVal = safeNum(heurVal);
+
+      // push parsed numbers
+      iocData.push(iocVal);
+      yaraData.push(yaraVal);
+      heurData.push(heurVal);
+
+    } catch(err){
+      // on error, push zeros so arrays keep in sync and log the issue
+      console.warn('componentChart: error parsing artifact', a && (a.artifact_id || a.original_filename), err);
+      labels.push(a.artifact_id || 'unknown');
+      iocData.push(0); yaraData.push(0); heurData.push(0);
+    }
+  });
+
+  // DEBUG: print a table so you can see what's being plotted
+  try {
+    const debugRows = labels.map((lab,i)=>({
+      artifact: lab,
+      ioc: iocData[i],
+      yara: yaraData[i],
+      heur: heurData[i]
+    }));
+    console.groupCollapsed('Component chart data (IOC/YARA/Heuristics)');
+    console.table(debugRows);
+    console.groupEnd();
+  } catch(e){ /* ignore */ }
+
+  const cfg = {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'IOC',
+          data: iocData,
+          borderColor: '#f7c948',
+          backgroundColor: 'rgba(247,201,72,0.06)',
+          tension: 0.2,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          borderWidth: 2
         },
-        scales: {
-          x: {
-            ticks: {
-              color: '#9aa0a6',
-              autoSkip: true,         // allow skipping if too many labels
-              maxTicksLimit: 20,      // but allow up to 20 ticks to show
-              maxRotation: 45,
-              minRotation: 45,
-              font: { size: 11 }      // slightly smaller font so filenames fit better
+        {
+          label: 'YARA',
+          data: yaraData,
+          borderColor: '#ff6b6b',
+          backgroundColor: 'rgba(255,107,107,0.06)',
+          tension: 0.2,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          borderWidth: 2
+        },
+        {
+          label: 'Heuristics',
+          data: heurData,
+          borderColor: '#00ff88',
+          backgroundColor: 'rgba(0,255,136,0.06)',
+          tension: 0.2,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          borderWidth: 2
+        }
+      ]
+    },
+    options: {
+      maintainAspectRatio: false,
+      responsive: true,
+      interaction: { mode: 'nearest', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#cfd6da' } },
+        tooltip: {
+          backgroundColor: '#111',
+          titleColor: '#00ff88',
+          bodyColor: '#fff',
+          callbacks: {
+            title: function(tt){
+              const idx = tt[0].dataIndex;
+              return 'Artifact: ' + (labels[idx] || 'unknown');
             },
-            grid: { color: 'rgba(255,255,255,0.03)' },
-            title: { display: true, text: 'Artifacts (filename)', color: '#9aa0a6' }
-          },
-          y: {
-            min: 0, max: 100,
-            ticks: { color: '#9aa0a6' },
-            grid: { color: 'rgba(255,255,255,0.03)' },
-            title: { display: true, text: 'Component score (%)', color: '#9aa0a6' }
+            label: function(item){
+              const meaning = {
+                'IOC': 'Indicator of Compromise',
+                'YARA': 'Rule-based match',
+                'Heuristics': 'Behavior/context scoring'
+              }[item.dataset.label] || '';
+              return item.dataset.label + ': ' + item.formattedValue + '%  ' + (meaning ? '('+meaning+')' : '');
+            }
           }
         }
+      },
+      scales: {
+        x: {
+          ticks: {
+            color: '#9aa0a6',
+            autoSkip: true,
+            maxTicksLimit: 18,
+            maxRotation: 45,
+            minRotation: 45,
+            font: { size: 11 }
+          },
+          grid: { color: 'rgba(255,255,255,0.03)' },
+          title: { display: true, text: 'Artifacts (filename)', color: '#9aa0a6' }
+        },
+        y: {
+          min: 0, max: 100,
+          ticks: { color: '#9aa0a6' },
+          grid: { color: 'rgba(255,255,255,0.03)' },
+          title: { display: true, text: 'Component score (%)', color: '#9aa0a6' }
+        }
       }
-    };
+    }
+  };
 
-    try { if(window._componentChart instanceof Chart) window._componentChart.destroy(); } catch(e){}
-    window._componentChart = new Chart(el.getContext('2d'), cfg);
-  })();
+  try { if(window._componentChart instanceof Chart) window._componentChart.destroy(); } catch(e){}
+  window._componentChart = new Chart(el.getContext('2d'), cfg);
+  
+})();
 
 });
 </script>

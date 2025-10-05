@@ -1488,7 +1488,7 @@ def api_upload_timeline():
 
 
 @app.route("/dashboard")
-@login_required
+
 def dashboard():
     """
     Dashboard: show case-level info (from DB) and artifacts list.

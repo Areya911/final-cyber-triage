@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="alert alert-success">
+  Account created for <strong>{{ email }}</strong>. Please <a href="{{ url_for('auth.login_get') }}">login</a>.
+</div>
+{% endblock %}

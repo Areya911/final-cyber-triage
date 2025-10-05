@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Demo - SYNC5{% endblock %}
+{% block content %}
+<section class="max-w-3xl mx-auto py-12 text-center">
+  <h2 class="text-4xl font-orbitron mb-6">Upload & Analyze</h2>
+  <form action="{{ url_for('upload_file') }}" method="post" enctype="multipart/form-data" class="p-6 bg-cyber-card rounded-lg glow-green">
+    <input type="file" name="file" class="block w-full text-white bg-gray-800 p-3 rounded mb-4 border border-cyber-green">
+    <button type="submit" class="bg-cyber-green text-black px-6 py-3 rounded-md font-bold hover-glow">Start Analysis</button>
+  </form>
+
+  {% if results %}
+  <div class="mt-10 p-6 bg-cyber-card rounded-lg">
+    <h3 class="text-2xl font-orbitron mb-4">Analysis Results</h3>
+    <ul class="space-y-3 text-left">
+      {% for file, score in results %}
+      <li class="flex justify-between">
+        <span>{{ file }}</span>
+        <span class="{% if score > 70 %}text-red-500{% elif score > 30 %}text-yellow-400{% else %}text-green-400{% endif %}">
+          {{ score }}%
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    <a href="{{ url_for('timeline') }}" class="mt-6 inline-block bg-cyber-green text-black px-5 py-2 rounded-md hover-glow">View Timeline</a>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

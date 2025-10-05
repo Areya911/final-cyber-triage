@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2 class="mb-4"  style="color: #00ff88;">Create Investigator Account</h2>
+<form method="POST" action="/signup" enctype="multipart/form-data" class="needs-validation" novalidate>
+
+  <!-- Official Identification -->
+  <fieldset class="mb-4 p-3 border rounded">
+    <legend class="fw-bold"  style="color: #ffffffda;">Official Identification</legend>
+    <div class="mb-3" style="color: #e9e5e5da;">
+      <label class="form-label"  style="color: #e9e5e5da;">Full Name</label>
+      <input type="text" class="form-control" name="fullName" placeholder="John A. Doe" required>
+    </div>
+    <div class="mb-3"  style="color: #e9e5e5da;">
+      <label class="form-label"  style="color: #e9e5e5da;">Rank</label>
+      <input type="text" class="form-control" name="rank" placeholder="Cyber Inspector">
+    </div>
+    <div class="mb-3">
+      <label class="form-label"  style="color: #e9e5e5da;">Department</label>
+      <input type="text" class="form-control" name="department" placeholder="State Cyber Cell">
+    </div>
+    <div class="mb-3">
+      <label class="form-label"  style="color: #e9e5e5da;">Badge / ID #</label>
+      <input type="text" class="form-control" name="badge" placeholder="12345">
+    </div>
+  </fieldset>
+
+  <!-- Contact & Authentication -->
+  <fieldset class="mb-4 p-3 border rounded">
+    <legend class="  fw-bold"  style="color: #ffffffda;">Contact & Authentication </legend>
+    <div class="mb-3">
+      <label class="form-label"  style="color: #e9e5e5da;">Official Email</label>
+      <input type="email" class="form-control" name="email" placeholder="you@agency.gov" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label"  style="color: #e9e5e5da;">Mobile Number</label>
+      <input type="tel" class="form-control" name="mobile" placeholder="+91XXXXXXXXXX" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label"  style="color: #e9e5e5da;">Emergency Contact</label>
+      <input type="tel" class="form-control" name="emergency" placeholder="Optional">
+    </div>
+    <div class="mb-3">
+      <label class="form-label"  style="color: #e9e5e5da;">Supervisor Email</label>
+      <input type="email" class="form-control" name="supervisorEmail" placeholder="supervisor@agency.gov">
+    </div>
+  </fieldset>
+
+  <!-- Work-related -->
+  <fieldset class="mb-4 p-3 border rounded">
+    <legend class="  fw-bold"  style="color: #ffffffda;">Work-related </legend>
+    <div class="mb-3">
+      <label class="form-label"  style="color: #e9e5e5da;">Jurisdiction</label>
+      <select class="form-select" name="jurisdiction">
+        <option selected disabled>Select Jurisdiction</option>
+        <option>State Cyber Cell</option>
+        <option>National Cyber Crime</option>
+        <option>Forensic Division</option>
+        <option>Other</option>
+      </select>
+    </div>
+    <div class="mb-3">
+      <label class="form-label"  style="color: #e9e5e5da;">Specialization</label>
+      <select class="form-select" name="specialization">
+        <option selected disabled>Select Specialization</option>
+        <option>Digital Forensics</option>
+        <option>Network Intrusion</option>
+        <option>Malware Analysis</option>
+        <option>Threat Intelligence</option>
+        <option>Reverse Engineering</option>
+      </select>
+    </div>
+  </fieldset>
+
+  <!-- Security Setup -->
+  <fieldset class="mb-4 p-3 border rounded ">
+    <legend class="  fw-bold"  style="color: #ffffffda;">Security Setup</legend>
+    <div class="mb-3">
+      <label class="form-label"  style="color: #e9e5e5da;">Create Password</label>
+      <input type="password" class="form-control" name="password" placeholder="Minimum 12 characters" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label"  style="color: #e9e5e5da;">Confirm Password</label>
+      <input type="password" class="form-control" name="passwordConfirm" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label"  style="color: #e9e5e5da;">Security Question Answer</label>
+      <input type="text" class="form-control" name="secQuestion" placeholder="Mother's maiden name">
+    </div>
+  </fieldset>
+
+  <!-- ID Upload & PKI -->
+  <fieldset class="mb-4 p-3 border rounded">
+    <legend class="  fw-bold"  style="color: #ffffffda;">ID Upload & PKI</legend>
+    <div class="mb-3">
+      <label class="form-label"  style="color: #e9e5e5da;">Official ID Proof</label>
+      <input type="file" class="form-control" name="idUpload" accept=".pdf,image/*,.png" required>
+    </div>
+    <div class="mb-3">
+      <label class="form-label"  style="color: #e9e5e5da;">Digital Certificate / Public Key (PKI)</label>
+      <input type="file" class="form-control" name="pki" accept=".pem,.cer,.der,.crt">
+    </div>
+  </fieldset>
+
+  <!-- Submit -->
+  <div class="d-grid">
+    <button type="submit" class="btn btn-success">Create Account</button>
+  </div>
+</form>
+
+{% endblock %}

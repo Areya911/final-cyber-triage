@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}Case Chain-of-Custody — {{ case_id }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0"  style="color: rgb(236, 236, 236) ">Chain of Custody — Case <span class="text" style="color: rgb(236, 236, 236);">{{ case_id }}</span></h2>
+  <div>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('dashboard') }}?case_id={{ case_id }}">Back to Dashboard</a>
+  </div>
+</div>
+
+<div class="table-responsive">
+  <table class="table table-dark table-striped table-sm align-middle">
+    <thead>
+      <tr>
+        <th style="width:6%">ID</th>
+        <th style="width:14%">Timestamp (IST)</th>
+        <th style="width:14%">Artifact ID</th>
+        <th style="width:14%">Filename</th>
+        <th style="width:12%">Actor</th>
+        <th style="width:10%">Action</th>
+        <th style="width:20%">Summary / Details</th>
+        <th style="width:10%">Signature</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in entries %}
+        {# --- normalize common fields (dict vs object) --- #}
+        {% if e is mapping %}
+          {% set ts_raw = e.get('ts') %}
+          {% set actor = e.get('actor') %}
+          {% set action = e.get('action') %}
+          {% set artifact_id = e.get('artifact_id') or e.get('artifact') %}
+          {% set filename = e.get('filename') %}
+          {% set raw_details = e.get('details') %}
+          {% set sig = e.get('signature') %}
+        {% else %}
+          {% set ts_raw = attribute(e, 'ts') %}
+          {% set actor = attribute(e, 'actor') %}
+          {% set action = attribute(e, 'action') %}
+          {% set artifact_id = attribute(e, 'artifact_id') or attribute(e, 'artifact') %}
+          {% set filename = attribute(e, 'filename') %}
+          {% set raw_details = attribute(e, 'details') %}
+          {% set sig = attribute(e, 'signature') %}
+        {% endif %}
+
+        {# try extract filename from details if missing and details looks like mapping passed from backend #}
+        {% if not filename %}
+          {% if raw_details is mapping %}
+            {% set filename = raw_details.get('original_filename') or raw_details.get('saved_filename') or raw_details.get('original_name') %}
+          {% endif %}
+        {% endif %}
+        {% if not filename %}{% set filename = '-' %}{% endif %}
+
+        {# --- make a safe attempt to parse JSON if the details string looks like JSON --- #}
+        {% set details_obj = raw_details %}
+        {% if raw_details is string %}
+          {% set trimmed = raw_details|trim %}
+          {% if trimmed.startswith('{') or trimmed.startswith('[') %}
+            {# NOTE: fromjson will raise if invalid JSON; safer to parse in Python before rendering #}
+            {% set details_obj = trimmed | fromjson %}
+          {% else %}
+            {% set details_obj = raw_details %}
+          {% endif %}
+        {% endif %}
+
+        {# --- friendly summary --- #}
+        {% set action_lower = (action|string).lower() if action else '' %}
+        {% if 'uploaded' in action_lower %}
+          {% set summary = 'Uploaded' %}
+          {% if details_obj is mapping and details_obj.sha256 %}
+            {% set sha = details_obj.sha256 %}
+            {% set summary = summary ~ ' — SHA256: ' ~ (sha[:12] ~ '...' if sha|string|length > 12 else sha) %}
+          {% endif %}
+        {% elif 'metadata_verified' in action_lower or 'verify' in action_lower %}
+          {% set ok = none %}
+          {% if details_obj is mapping and (details_obj.get('expected') is not none and details_obj.get('observed') is not none) %}
+            {% set ok = (details_obj.get('expected') == details_obj.get('observed')) %}
+          {% endif %}
+          {% if ok is sameas(true) %}
+            {% set summary = 'Metadata verified — OK' %}
+          {% elif ok is sameas(false) %}
+            {% set summary = 'Metadata verified — MISMATCH' %}
+          {% else %}
+            {% set summary = 'Metadata verification' %}
+          {% endif %}
+        {% else %}
+          {% set summary = action or '-' %}
+        {% endif %}
+
+      <tr>
+        <td class="small">{{ e.id }}</td>
+
+        <td class="small">
+          {%- if ts_raw -%}
+            {%- if ist_time is defined -%}
+              {{ ts_raw | ist_time }}
+            {%- else -%}
+              {{ ts_raw }}
+            {%- endif -%}
+          {%- else -%}
+            -
+          {%- endif -%}
+        </td>
+
+        <td style="font-family:monospace; font-size:0.88rem;">{{ artifact_id or '-' }}</td>
+        <td class="small">{{ filename }}</td>
+        <td class="small">{{ actor or '-' }}</td>
+        <td class="small">{{ action or '-' }}</td>
+
+        <td class="small">
+          <div style="font-weight:600; margin-bottom:4px;">{{ summary }}</div>
+
+          {% if details_obj is mapping %}
+            <details class="small">
+              <summary class="muted">Show raw details</summary>
+              <pre class="small" style="white-space:pre-wrap; max-height:220px; overflow:auto; background:#0b1220; padding:8px; border-radius:6px;">{{ details_obj | tojson(indent=2) }}</pre>
+            </details>
+          {% elif details_obj %}
+            <div class="muted">{{ details_obj }}</div>
+          {% else %}
+            <div class="muted">—</div>
+          {% endif %}
+        </td>
+
+        {# --- signature column: show Signed/Unsigned, tooltip shows full signature --- #}
+        <td class="small">
+  {% if sig %}
+    <span class="badge bg-success" title="{{ sig }}" role="img" aria-label="Signed — signature available">
+      Signed
+    </span>
+  {% else %}
+    <span class="text-muted" role="img" aria-label="Unsigned">Unsigned</span>
+  {% endif %}
+</td>
+
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{# No copy/download UI required per request — kept page JS-free for signature actions #}
+{% endblock %}

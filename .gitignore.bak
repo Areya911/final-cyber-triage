@@ -1,0 +1,51 @@
+# ===============================
+# Python cache / build / env
+# ===============================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Databases
+*.sqlite3
+*.db
+*.db-journal
+
+# Virtual environments
+venv/
+.env/
+
+# ===============================
+# OS junk files
+# ===============================
+.DS_Store
+Thumbs.db
+
+# ===============================
+# Evidence & artifacts (sensitive!)
+# ===============================
+evidence/
+data/triage.db
+data/*.db
+data/*.sqlite3
+data/*/processes.csv
+data/*/events.json
+data/*/timeline.json
+
+# ===============================
+# Demo / test files
+# ===============================
+*_demo.py
+test_*.py
+sandbox_*.py
+
+
+# ===============================
+# Reports / Generated files
+# ===============================
+*.pdf
+*.html
+reports/
+output/
+backups/

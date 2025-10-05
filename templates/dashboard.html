@@ -53,13 +53,11 @@
           <h3 class="mb-0" style="color: #d7dbd9;">{{ artifact_count }}</h3>
         </div>
       </div>
-
-      <!-- Move case-switcher and CoC up here -->
-      
     </div>
   </div>
 
-   <div class="col-md-5">
+  <!-- CENTER column: Suspicion score card (keeps inline sparkline) -->
+  <div class="col-md-4">
     <div class="card h-100" style="border-left:4px solid var(--accent);">
       <div class="card-body">
         <h6 class="card-subtitle text" style="color: #00ff88;">Suspicion Score (case)</h6>
@@ -93,7 +91,7 @@
         {# Reveal active weight config from artifacts if present #}
         {% set active_weights = None %}
         {% for art in artifacts %}
-          {% set a_analysis = art.analysis if art.analysis is not none else (art.get('analysis') if art.get is defined else None) %}
+          {% set a_analysis = art.analysis if art.analysis is not none else (art.get('analysis') if a.get is defined else None) %}
           {% if not active_weights and a_analysis and a_analysis is mapping and a_analysis.get('weights') %}
             {% set active_weights = a_analysis.get('weights') %}
           {% endif %}
@@ -111,29 +109,30 @@
           </div>
           <div class="mt-2"  style="color: #b9b9b9;">Editable via <code>data/weights.json</code>.</div>
         </div>
-        
-        {# Compact line chart below the score inside the same card #}
-        <div class="mt-3">
-          <canvas id="inlineScoreChart" height="80" style="width:100%;"></canvas>
-        </div>
-<p class="small text-muted mb-2" style="color:#bbb;">
-  <strong>X-axis:</strong> Artifacts (files in this case) &nbsp; • &nbsp;
-  <strong>Y-axis:</strong> Component score (0–100%) &nbsp; • &nbsp;
-  <strong>Lines:</strong> IOC, YARA, Heuristics comparison per file.
-</p>
 
+        <!-- small inline sparkline (keeps quick glance) -->
+        
       </div>
     </div>
   </div>
 
-  
-
-      <div class="mt-auto text-end">
-        <!-- Optional place for other action buttons in future -->
+  <!-- RIGHT column: Big Component Comparison chart (moved into empty space) -->
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body d-flex flex-column">
+        <h6 class="card-subtitle mb-3" style="color:#00ff88;">Component Comparison (IOC / YARA / Heuristics)</h6>
+        <!-- bigger canvas that fills remaining card body -->
+        <div style="flex:1 1 auto; min-height:260px;">
+          <canvas id="componentChart" height="320" style="width:100%; height:100%;"></canvas>
+        </div>
+        <div class="mt-2 small text-muted">
+          <em>Hover a point to see the full filename and per-component value.</em>
+        </div>
       </div>
     </div>
   </div>
 </div>
+
 
 <h5 class="mt-3"  style="color: #ebe8e8;">Artifacts list</h5>
 
@@ -302,14 +301,7 @@
     </ul>
   </div>
 <!-- === Component Comparison Chart === -->
-{% if artifacts and artifacts|length > 0 %}
-<div class="card mt-4" style="background-color:#111; border:1px solid #222;">
-  <div class="card-body">
-    <h5 class="mb-3" style="color:#00ff88;">Component Comparison (IOC / YARA / Heuristics)</h5>
-    <canvas id="componentChart" height="200" style="width:100%;"></canvas>
-  </div>
-</div>
-{% endif %}
+
 
 {% else %}
   <div class="alert alert-warning">No artifacts found for this case. Upload one from the <a href="{{ url_for('home') }}">Upload page</a>.</div>
@@ -710,6 +702,7 @@ document.addEventListener('DOMContentLoaded', function(){
   })();
 
   // ---- Component Comparison Chart (IOC / YARA / Heuristics) -------------
+    // ---- Component Comparison Chart (IOC / YARA / Heuristics) -------------
   (function renderComponentChart(){
     const el = document.getElementById('componentChart');
     if(!el) return;
@@ -722,15 +715,16 @@ document.addEventListener('DOMContentLoaded', function(){
 
     artifacts.forEach(a => {
       try {
+        // Use full filename for x-axis (prefer original_filename, fallback to saved_filename or artifact_id)
         const labelFull = (a.original_filename || a.saved_filename || a.artifact_id || '').toString();
-        labels.push(shortLabel(labelFull, 18));
-        let analysis = a.analysis || (typeof a.get === 'function' ? a.get('analysis') : null) || {};
-        analysis = safeParseAnalysis(analysis);
+        labels.push(labelFull);
 
-        // Try a few common locations for component scores:
-        // 1) analysis.components.ioc.score   (new engine)
-        // 2) analysis.breakdown.ioc_component (legacy)
-        // 3) analysis.ioc_score or analysis.ioc_component
+        let analysis = a.analysis || (typeof a.get === 'function' ? a.get('analysis') : null) || {};
+        if(typeof analysis === 'string'){
+          try { analysis = JSON.parse(analysis); } catch(e){ analysis = {}; }
+        }
+
+        // pickComponent as before (keeps compatibility)
         function pickComponent(obj, paths){
           for(const p of paths){
             const parts = p.split('.');
@@ -751,7 +745,7 @@ document.addEventListener('DOMContentLoaded', function(){
           'breakdown.ioc_component',
           'ioc_component',
           'ioc_score',
-          'components.ioc'   // might be numeric
+          'components.ioc'
         ]);
         const yaraVal = pickComponent(analysis, [
           'components.yara.score',
@@ -769,7 +763,6 @@ document.addEventListener('DOMContentLoaded', function(){
           'components.heuristics'
         ]);
 
-        // parse numbers defensively
         function toNum(v){ const n = parseFloat(v); return (isNaN(n) ? 0 : Math.max(0, Math.min(100, n))); }
         iocData.push(toNum(iocVal));
         yaraData.push(toNum(yaraVal));
@@ -827,6 +820,7 @@ document.addEventListener('DOMContentLoaded', function(){
             callbacks: {
               title: function(tt){
                 const idx = tt[0].dataIndex;
+                // show full filename in tooltip
                 return 'Artifact: ' + (labels[idx] || 'unknown');
               },
               label: function(item){
@@ -842,9 +836,16 @@ document.addEventListener('DOMContentLoaded', function(){
         },
         scales: {
           x: {
-            ticks: { color: '#9aa0a6', maxRotation: 0, autoSkip: true, maxTicksLimit: 12 },
+            ticks: {
+              color: '#9aa0a6',
+              autoSkip: true,         // allow skipping if too many labels
+              maxTicksLimit: 20,      // but allow up to 20 ticks to show
+              maxRotation: 45,
+              minRotation: 45,
+              font: { size: 11 }      // slightly smaller font so filenames fit better
+            },
             grid: { color: 'rgba(255,255,255,0.03)' },
-            title: { display: true, text: 'Artifacts (short name)', color: '#9aa0a6' }
+            title: { display: true, text: 'Artifacts (filename)', color: '#9aa0a6' }
           },
           y: {
             min: 0, max: 100,
@@ -862,6 +863,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
 });
 </script>
+
 
 
 {% endblock %}

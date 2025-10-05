@@ -518,36 +518,36 @@ def get_events_for_case(case_id, keep_na=False):
 # BEFORE: app.register_blueprint(timeline_bp)
 
 # protect everything inside the timeline blueprint
-@timeline_bp.before_request
-def require_login_for_timeline_bp():
-    # allow blueprint static assets (if the blueprint registers static)
-    if request.endpoint and request.endpoint.startswith(f"{timeline_bp.name}.static"):
-        return None
+# @timeline_bp.before_request
+# def require_login_for_timeline_bp():
+#     # allow blueprint static assets (if the blueprint registers static)
+#     if request.endpoint and request.endpoint.startswith(f"{timeline_bp.name}.static"):
+#         return None
 
-    # allow any public endpoints you intentionally left on this blueprint
-    # e.g. if you have timeline_bp.view_functions names to exempt:
-    PUBLIC_TIMELINE_ENDPOINTS = {
-        # f"{timeline_bp.name}.public_ping",
-    }
-    if request.endpoint in PUBLIC_TIMELINE_ENDPOINTS:
-        return None
+#     # allow any public endpoints you intentionally left on this blueprint
+#     # e.g. if you have timeline_bp.view_functions names to exempt:
+#     PUBLIC_TIMELINE_ENDPOINTS = {
+#         # f"{timeline_bp.name}.public_ping",
+#     }
+#     if request.endpoint in PUBLIC_TIMELINE_ENDPOINTS:
+#         return None
 
-    # authenticated?
-    if session.get("user"):
-        return None
+#     # authenticated?
+#     if session.get("user"):
+#         return None
 
-    # If the client expects JSON (AJAX/API), return 401 JSON instead of redirect.
-    wants_json = request.accept_mimetypes.best in ("application/json", "application/javascript") or request.path.startswith("/api/")
-    if wants_json:
-        return jsonify({"error": "authentication required"}), 401
+#     # If the client expects JSON (AJAX/API), return 401 JSON instead of redirect.
+#     wants_json = request.accept_mimetypes.best in ("application/json", "application/javascript") or request.path.startswith("/api/")
+#     if wants_json:
+#         return jsonify({"error": "authentication required"}), 401
 
-    # otherwise redirect to login and preserve next path
-    return redirect(url_for("login", next=request.path))
+#     # otherwise redirect to login and preserve next path
+#     return redirect(url_for("login", next=request.path))
 
-# Now register the timeline blueprint (after the hook is attached)
-if timeline_bp and timeline_bp.name not in app.blueprints:
-    app.register_blueprint(timeline_bp)
-    logger.debug("Timeline blueprint '%s' registered with login guard.", timeline_bp.name)
+# # Now register the timeline blueprint (after the hook is attached)
+# if timeline_bp and timeline_bp.name not in app.blueprints:
+#     app.register_blueprint(timeline_bp)
+#     logger.debug("Timeline blueprint '%s' registered with login guard.", timeline_bp.name)
 
 from modules.auth import bp as auth_bp
 app.register_blueprint(auth_bp)
@@ -561,13 +561,13 @@ def home():
 
 # Serve the upload form via GET so the browser can visit /upload
 @app.route("/upload", methods=["GET"])
-@login_required
+#@login_required
 def upload_page():
     # render the upload form template
     return render_template("upload.html")
 
 @app.route("/upload", methods=["POST"])
-@login_required
+#@login_required
 def upload_file():
     """
     Save file to disk (modules.utils.save_uploaded_file), compute SHA-256,
@@ -1541,7 +1541,6 @@ def timeline():
 
 
 @app.route("/report")
-@login_required
 def report():
     """
     Report preview: collect case & artifacts from DB (preferred) or manifest (fallback)
@@ -1843,7 +1842,7 @@ def _render_report_html(case_id):
         raise
 
 @app.route("/report/bundle/<case_id>")
-@login_required
+#@login_required
 def report_bundle_redirect(case_id):
     """
     Temporary compatibility redirect: forward legacy /report/bundle/<case_id>
@@ -1862,7 +1861,7 @@ def report_bundle_redirect(case_id):
 
 
 @app.route("/report/pdf/<case_id>")
-@login_required
+#@login_required
 def report_pdf(case_id):
     """
     Render the report template and attempt to convert to PDF on-the-fly.
@@ -1923,7 +1922,7 @@ def report_pdf(case_id):
 
 
 @app.route("/report/bundle/<case_id>")
-@login_required
+#@login_required
 def report_bundle(case_id):
     """
     Serve an existing case zip if present, otherwise build a zip containing

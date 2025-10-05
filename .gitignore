@@ -49,3 +49,4 @@ sandbox_*.py
 reports/
 output/
 backups/
+!templates/*.html

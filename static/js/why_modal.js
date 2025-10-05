@@ -81,7 +81,7 @@
       {key:'ioc_component', label:'IOC'},
       {key:'yara_component', label:'YARA'},
       {key:'heuristics_component', label:'HEURISTICS'},
-      {key:'reputation_component', label:'REPUTATION'}
+    
     ];
 
     rows.forEach(r => {
@@ -230,7 +230,7 @@
       ioc_component: payload.components.ioc && payload.components.ioc.score,
       yara_component: payload.components.yara && payload.components.yara.score,
       heuristics_component: payload.components.heuristics && payload.components.heuristics.score,
-      reputation_component: payload.components.reputation && payload.components.reputation.score
+
     }) || {};
 
     // clear and add component bars

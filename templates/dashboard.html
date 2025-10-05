@@ -1,57 +1,43 @@
 {% extends "base.html" %}
-{% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <div>
-    <h2>Dashboard — Case: <small class="text-muted">{{ case_id }}</small></h2>
-    <div class="small text-muted">Explainability: every score maps to component signals (IOC, YARA, Heuristics)</div>
-  </div>
+{% block title %}Dashboard — {{ case_id }}{% endblock %}
 
-  <div class="d-flex align-items-center">
-    <div id="timeline-artifact-badge" class="me-3"></div>
+{% block content %}
+<div class="hero mb-4">
+  <div class="d-flex justify-content-between align-items-start">
     <div>
-      <a href="{{ url_for('report') }}?case_id={{ case_id }}" class="btn btn-outline-primary me-2">Report Preview</a>
-      <a href="{{ url_for('api_manifest', case_id=case_id) }}" class="btn btn-outline-secondary">Manifest (JSON)</a>
+      <h1 class="mb-1"><span class="accent">Case</span> <small class="text-muted">—</small> <small class="muted">{{ case_id }}</small></h1>
+      <p class="lead">Merged evidence view · explainable scoring · tamper-proof audits</p>
+    </div>
+
+    <div class="text-end">
+      <div id="timeline-artifact-badge" class="mb-2"></div>
+      <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary" href="{{ url_for('report') }}?case_id={{ case_id }}">Report Preview</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('api_manifest', case_id=case_id) }}">Manifest (JSON)</a>
+      </div>
     </div>
   </div>
 </div>
 
-{# ------------------------
-   Helper: pick badge CSS for a numeric score
-   ------------------------ #}
-{% macro score_badge(score) -%}
-  {%- set s = (score|default(0)|int) -%}
-  {%- if s >= 70 -%}
-    {% set cls = "bg-danger" %}
-  {%- elif s > 30 -%}
-    {% set cls = "bg-warning text-dark" %}
-  {%- else -%}
-    {% set cls = "bg-success" %}
-  {%- endif -%}
-  <span class="badge {{ cls }}">{{ s }}%</span>
-{%- endmacro %}
-
-{# ------------------------
-   Case summary row: artifact count + case suspicion score + active weights
-   ------------------------ #}
-<div class="row mb-4">
+<div class="row g-3 mb-4">
   <div class="col-md-3">
     <div class="card">
       <div class="card-body">
-        <h6 class="card-subtitle mb-2 text-muted">Artifacts</h6>
-        <h3>{{ artifact_count }}</h3>
+        <h6 class="card-subtitle mb-2"  style="color: #e6e6e6;">Artifacts</h6>
+        <h3 class="mb-0" style="color: #d7dbd9;">{{ artifact_count }}</h3>
       </div>
     </div>
   </div>
 
   <div class="col-md-5">
-    <div class="card h-100">
+    <div class="card h-100" style="border-left:4px solid var(--accent);">
       <div class="card-body">
-        <h6 class="card-subtitle mb-2 text-muted">Suspicion Score (case)</h6>
+        <h6 class="card-subtitle text" style="color: #00ff88;">Suspicion Score (case)</h6>
 
-        {# collect artifact final scores robustly #}
+        {# Gather artifact scores robustly #}
         {% set ns = namespace(scores=[]) %}
         {% for art in artifacts %}
-          {% set analysis = art.analysis if art.analysis is not none else (art.get('analysis') if art.get('analysis') is defined else None) %}
+          {% set analysis = art.analysis if art.analysis is not none else (art.get('analysis') if art.get is defined else None) %}
           {% if analysis and analysis is mapping %}
             {% set fs = analysis.get('final_score') or analysis.get('suspicion_score') or (analysis.get('heuristics') and analysis.get('heuristics', {}).get('suspicion_score')) %}
             {% if fs is not none %}
@@ -63,22 +49,25 @@
         {% if ns.scores and ns.scores|length > 0 %}
           {% set case_score = ns.scores|max %}
           <div class="d-flex align-items-center">
-            <div class="me-3">{{ score_badge(case_score) }}</div>
+            <div class="me-3">
+              <span class="badge {% if case_score >= 70 %}bg-danger{% elif case_score > 30 %}bg-warning text-dark{% else %}bg-success{% endif %}" style="font-size:1.05rem;padding:0.5rem 0.7rem">{{ case_score }}%</span>
+            </div>
             <div class="flex-fill">
-              <div class="small text-muted">Case score = max(artifact scores) — expand artifacts to inspect why</div>
+              <div class="new" style="color: #b7b8b7;">Case score = max(artifact scores) — expand artifacts to inspect why</div>
             </div>
           </div>
         {% else %}
           <h3><span class="text-muted">—</span></h3>
         {% endif %}
 
-{% set active_weights = None %}
-{% for art in artifacts %}
-  {% set a_analysis = art.analysis if art.analysis is not none else (art.get('analysis') if art.get('analysis') is defined else None) %}
-  {% if not active_weights and a_analysis and a_analysis is mapping and a_analysis.get('weights') %}
-    {% set active_weights = a_analysis.get('weights') %}
-  {% endif %}
-{% endfor %}
+        {# Reveal active weight config from artifacts if present #}
+        {% set active_weights = None %}
+        {% for art in artifacts %}
+          {% set a_analysis = art.analysis if art.analysis is not none else (art.get('analysis') if art.get is defined else None) %}
+          {% if not active_weights and a_analysis and a_analysis is mapping and a_analysis.get('weights') %}
+            {% set active_weights = a_analysis.get('weights') %}
+          {% endif %}
+        {% endfor %}
         {% if not active_weights %}
           {% set active_weights = {'ioc': 0.40, 'yara': 0.30, 'heuristics': 0.30} %}
         {% endif %}
@@ -90,7 +79,7 @@
             <span class="badge bg-secondary">YARA {{ (active_weights.yara * 100)|round(0) }}%</span>
             <span class="badge bg-secondary">Heuristics {{ (active_weights.heuristics * 100)|round(0) }}%</span>
           </div>
-          <div class="mt-2 text-muted small">Weights can be overridden via <code>data/weights.json</code>.</div>
+          <div class="mt-2"  style="color: #b9b9b9;">Editable via <code>data/weights.json</code>.</div>
         </div>
 
       </div>
@@ -99,8 +88,7 @@
 
   <div class="col-md-4">
     <form id="case-switcher-form" class="d-inline-block mb-3" method="get" action="{{ url_for('dashboard') }}">
-      <label for="case-switcher" class="sr-only">Select case</label>
-      <div class="input-group" style="max-width:360px;">
+      <div class="input-group" style="max-width:100%;">
         <select id="case-switcher" name="case_id" class="form-select" onchange="document.getElementById('case-switcher-form').submit();">
           {% if cases %}
             {% for c in cases %}
@@ -110,14 +98,17 @@
             <option value="{{ case_id }}" selected>{{ case_id }}</option>
           {% endif %}
         </select>
-        <button class="btn btn-outline-secondary" type="submit" title="Go">Go</button>
+        <button class="btn btn-outline-secondary" type="submit">Go</button>
       </div>
     </form>
+
+    <div class="mt-3">
+      <a href="{{ url_for('view_case_coc', case_id=case_id) }}" class="btn btn-outline-warning">Case CoC</a>
+    </div>
   </div>
 </div>
-<a href="{{ url_for('view_case_coc', case_id=case_id) }}" class="btn btn-outline-warning me-2">Case CoC</a>
 
-<h5 class="mt-3">Artifacts list</h5>
+<h5 class="mt-3"  style="color: #ebe8e8;">Artifacts list</h5>
 
 {% if artifacts and artifacts|length > 0 %}
   <div class="table-responsive">
@@ -127,7 +118,7 @@
           <th>Artifact ID</th>
           <th>Filename</th>
           <th>Uploaded By</th>
-          <th>Uploaded At (UTC)</th>
+          <th>Uploaded At (IST)</th>
           <th>Size (bytes)</th>
           <th>Analysis & Explainability</th>
           <th>Actions</th>
@@ -136,58 +127,44 @@
       <tbody>
         {% for a in artifacts %}
           {% set aid = a.artifact_id %}
-          <tr id="row-{{ aid }}">
-<td style="font-family:monospace">
-  {{ aid }}
+          <tr id="row-{{ aid }}" data-artifact-id="{{ aid }}">
+            <td style="font-family:monospace">
+              {{ aid }}
+              {% set is_dup = (a.is_duplicate if a is mapping else (a.get('is_duplicate') if a.get is defined else False)) %}
+              {% set dup_of = (a.duplicate_of if a is mapping else (a.get('duplicate_of') if a.get is defined else None)) %}
+              {% if is_dup or dup_of %}
+                <span class="badge bg-secondary ms-2" data-bs-toggle="tooltip" title="Duplicate of {{ dup_of if dup_of else 'unknown' }}">Duplicate</span>
+                {% if dup_of %}
+                  <a href="{{ url_for('api_manifest', case_id=case_id) }}#{{ dup_of }}" class="ms-1 small text-decoration-none" data-bs-toggle="tooltip" title="Jump to original artifact {{ dup_of }}">↪ Original</a>
+                {% endif %}
+              {% endif %}
+              <div class="mt-1 small"><span class="meta-status" id="meta-status-{{ aid }}"></span></div>
+            </td>
 
-  {# show duplicate badge if flagged #}
-  {% set is_dup = (a.is_duplicate if a is mapping else (a.get('is_duplicate') if a.get is defined else False)) %}
-  {% set dup_of = (a.duplicate_of if a is mapping else (a.get('duplicate_of') if a.get is defined else None)) %}
-
-  {% if is_dup or dup_of %}
-    <span class="badge bg-secondary ms-2"
-          data-bs-toggle="tooltip"
-          title="Duplicate of {{ dup_of if dup_of else 'unknown' }}">
-      Duplicate
-    </span>
-
-    {% if dup_of %}
-      <a href="{{ url_for('api_manifest', case_id=case_id) }}#{{ dup_of }}"
-         class="ms-1 small text-decoration-none"
-         data-bs-toggle="tooltip"
-         title="Jump to original artifact {{ dup_of }}">
-        ↪ Original
-      </a>
-    {% endif %}
-  {% endif %}
-
-  {# placeholder for verify status #}
-  <div class="mt-1 small"><span class="meta-status" id="meta-status-{{ aid }}"></span></div>
-</td>
             <td>{{ a.original_filename }}</td>
             <td>{{ a.uploaded_by }}</td>
-            <td>{{ a.uploaded_at }}</td>
+            <td>{{ a.uploaded_at | ist_time }}</td>
             <td>{{ a.size_bytes }}</td>
 
             <td>
-              {% set analysis = a.analysis if a.analysis is not none else (a.get('analysis') if a.get('analysis') is defined else None) %}
-
+              {% set analysis = a.analysis if a.analysis is not none else (a.get('analysis') if a.get is defined else None) %}
               {% if analysis and analysis is mapping %}
                 {% set final = analysis.get('final_score') or analysis.get('suspicion_score') or (analysis.get('heuristics') and analysis.get('heuristics', {}).get('suspicion_score')) %}
                 {% set final_int = final|default(0)|int %}
-
                 <div class="mb-1 d-flex align-items-center">
-                  <div class="me-2">{{ score_badge(final_int) }}</div>
-                  <div class="flex-grow-1">
+                  <div class="me-2">
+                    <span class="badge {% if final_int >= 70 %}bg-danger{% elif final_int > 30 %}bg-warning text-dark{% else %}bg-success{% endif %}">{{ final_int }}%</span>
+                  </div>
+                  <div class="flex-fill">
                     <div class="progress" style="height:8px;">
-  {% if final_int >= 70 %}
-    <div class="progress-bar bg-danger" role="progressbar" data-width="{{ final_int }}" style="width: 0%;" aria-valuenow="{{ final_int }}" aria-valuemin="0" aria-valuemax="100"></div>
-  {% elif final_int > 30 %}
-    <div class="progress-bar bg-warning" role="progressbar" data-width="{{ final_int }}" style="width: 0%;" aria-valuenow="{{ final_int }}" aria-valuemin="0" aria-valuemax="100"></div>
-  {% else %}
-    <div class="progress-bar bg-success" role="progressbar" data-width="{{ final_int }}" style="width: 0%;" aria-valuenow="{{ final_int }}" aria-valuemin="0" aria-valuemax="100"></div>
-  {% endif %}
-</div>
+                      {% if final_int >= 70 %}
+                        <div class="progress-bar bg-danger" role="progressbar" data-width="{{ final_int }}" style="width: 0%;"></div>
+                      {% elif final_int > 30 %}
+                        <div class="progress-bar bg-warning" role="progressbar" data-width="{{ final_int }}" style="width: 0%;"></div>
+                      {% else %}
+                        <div class="progress-bar bg-success" role="progressbar" data-width="{{ final_int }}" style="width: 0%;"></div>
+                      {% endif %}
+                    </div>
                   </div>
                 </div>
 
@@ -207,13 +184,14 @@
                   {% endif %}
                 </div>
 
+                {# compact blob for Why modal #}
                 {% set _ns = namespace(iocs=[], yaras=[]) %}
                 {% for m in (analysis.get('ioc_matches') or []) %}
                   {% if m is mapping %}
                     {% set _mi = {
                       "type": (m.get('type') if m.get('type') is defined else 'ioc'),
                       "value": (m.get('value') if m.get('value') is defined else (m.get('ioc') if m.get('ioc') is defined else '')),
-                      "confidence": (m.get('confidence') if m.get('confidence') is defined else (m.get('ioc_confidence') if m.get('ioc_confidence') is defined else None)),
+                      "confidence": (m.get('confidence') if m.get('confidence') is defined else None),
                       "tags": (m.get('tags') if m.get('tags') is defined else [])
                     } %}
                   {% else %}
@@ -261,89 +239,6 @@
                   <div class="mt-1 small text-muted">Top: {{ compact_blob.reasons[:3] | join(', ') }}{% if compact_blob.reasons|length > 3 %}...{% endif %}</div>
                 {% endif %}
 
-                {% if ioc_matches and ioc_matches|length > 0 %}
-                  <div class="collapse mt-2" id="ioc-{{ aid }}">
-                    <div class="card card-body py-2">
-                      <strong>IOC Matches</strong>
-                      <ul class="mb-0">
-                        {% for m in ioc_matches %}
-                          {% set m_type = (m.get('type') if m is mapping else 'ioc') %}
-                          {% set m_value = (m.get('value') if m is mapping else (m if m is string else '')) %}
-                          {% set m_conf = (m.get('confidence') if m is mapping else None) %}
-                          {% set m_tags = (m.get('tags') if m is mapping else []) %}
-                          <li class="mb-1">
-                            <small class="text-muted">{{ m_type }}:</small>
-                            <span class="ms-1">{{ m_value }}</span>
-                            {% if m_conf %}<span class="ms-2 badge bg-secondary small">conf: {{ m_conf }}</span>{% endif %}
-                            {% if m_tags and m_tags|length > 0 %}<div class="small text-muted mt-1">tags: {{ m_tags|join(', ') }}</div>{% endif %}
-                          </li>
-                        {% endfor %}
-                      </ul>
-                    </div>
-                  </div>
-                {% endif %}
-
-                {% if yara_matches and yara_matches|length > 0 %}
-                  <div class="collapse mt-2" id="yara-{{ aid }}">
-                    <div class="card card-body py-2">
-                      <strong>YARA Matches</strong>
-                      <ul class="mb-0">
-                        {% for y in yara_matches %}
-                          {% set rule = (y.get('rule') if y is mapping else (y if y is string else '<unnamed>')) %}
-                          {% set tags = (y.get('tags') if y is mapping else []) %}
-                          {% set meta = (y.get('meta') if y is mapping else {}) %}
-                          <li class="mb-2">
-                            <div><strong>Rule:</strong> {{ rule }}</div>
-                            {% if meta and meta.severity is defined %}
-                              <div><small class="text-muted">Severity:</small> <span class="badge bg-{{ 'danger' if meta.severity in ['critical','high'] else 'warning' if meta.severity=='medium' else 'secondary' }}">{{ meta.severity }}</span></div>
-                            {% endif %}
-                            {% if tags and tags|length > 0 %}
-                              <div class="small text-muted">Tags: {{ tags|join(', ') }}</div>
-                            {% endif %}
-                            {% if y.get('strings') %}
-                              <details class="mt-1">
-                                <summary class="small">Matched strings ({{ y.get('strings')|length }})</summary>
-                                <ul class="small mb-0">
-                                  {% for s in y.get('strings') %}
-                                    <li><code>{{ s.get('match') or s.get('raw') or s }}</code></li>
-                                  {% endfor %}
-                                </ul>
-                              </details>
-                            {% endif %}
-                          </li>
-                        {% endfor %}
-                      </ul>
-                    </div>
-                  </div>
-                {% endif %}
-
-                {% if heur %}
-                  <div class="mt-2">
-                    <span class="badge bg-info me-1">Heuristics: {{ heur.get('suspicion_score', 'N/A') }}/100</span>
-                    {% if heur.get('reasons') %}
-                      <button class="btn btn-sm btn-outline-info" type="button" data-bs-toggle="collapse" data-bs-target="#heur-{{ aid }}" aria-expanded="false" aria-controls="heur-{{ aid }}">
-                        Details ({{ heur.get('reasons')|length }})
-                      </button>
-                    {% endif %}
-                  </div>
-
-                  {% if heur.get('reasons') %}
-                    <div class="collapse mt-2" id="heur-{{ aid }}">
-                      <div class="card card-body py-2">
-                        <strong>Heuristic Flags</strong>
-                        <ul class="mb-0 small">
-                          {% for r in heur.get('reasons') %}
-                            <li>{{ r }}</li>
-                          {% endfor %}
-                        </ul>
-                        <div class="mt-2 small text-muted">
-                          Entropy: {{ '%.2f'|format(heur.get('entropy', 0.0)) }} ({{ heur.get('entropy_level', 'N/A') }})
-                        </div>
-                      </div>
-                    </div>
-                  {% endif %}
-                {% endif %}
-
               {% else %}
                 <span class="text-muted">Pending analysis</span>
               {% endif %}
@@ -358,19 +253,12 @@
               <a class="btn btn-sm btn-outline-danger" href="{{ url_for('api_yara_check', case_id=case_id, artifact_id=a.artifact_id) }}">Re-run YARA</a>
 
               <div class="mt-2 d-flex gap-1">
-                <button type="button" class="btn btn-sm btn-outline-success verify-btn"
-                        data-case="{{ case_id }}" data-art="{{ aid }}">
-                  Verify
-                </button>
-
-                <button type="button" class="btn btn-sm btn-outline-secondary coc-btn"
-                        data-case="{{ case_id }}" data-art="{{ aid }}">
-                  CoC
-                </button>
+                <button type="button" class="btn btn-sm btn-outline-success verify-btn" data-case="{{ case_id|e }}" data-art="{{ aid|e }}">Verify</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary coc-btn" data-case="{{ case_id|e }}" data-art="{{ aid|e }}">CoC</button>
               </div>
 
               <div class="mt-2 small" id="verify-result-{{ aid }}"></div>
-              <div class="mt-2 small" id="coc-list-{{ aid }}"></div>
+              <div class="mt-2 small coc-list" id="coc-list-{{ aid|e }}"></div>
             </td>
           </tr>
         {% endfor %}
@@ -382,8 +270,8 @@
     <strong>Legend:</strong>
     <ul>
       <li><strong>IOC confidence</strong> — source-level confidence (high/medium/low) from IOC feed.</li>
-      <li><strong>YARA severity</strong> — rule author severity (meta.severity) used to surface critical detections.</li>
-      <li><strong>Weights</strong> — control relative contribution of IOC/YARA/Heuristics to final score (editable via <code>data/weights.json</code>).</li>
+      <li><strong>YARA severity</strong> — rule author severity used to surface critical detections.</li>
+      <li><strong>Weights</strong> — control relative contribution of IOC/YARA/Heuristics to final score.</li>
     </ul>
   </div>
 
@@ -391,12 +279,12 @@
   <div class="alert alert-warning">No artifacts found for this case. Upload one from the <a href="{{ url_for('home') }}">Upload page</a>.</div>
 {% endif %}
 
-{# Why? Modal (single global modal, populated dynamically) #}
-<div class="modal fade" id="whyModal" tabindex="-1" aria-labelledby="whyModalLabel" aria-hidden="true">
+{# Why modal (shared) #}
+<div class="modal fade" id="whyModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="whyModalLabel">Why this score?</h5>
+        <h5 class="modal-title">Why this score?</h5>
         <button type="button" class="btn btn-sm btn-outline-secondary me-2" id="copyWhyBtn">Copy JSON</button>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
@@ -407,13 +295,8 @@
           <div class="ms-auto small text-muted" id="why-artifact-id"></div>
         </div>
 
-        <div id="why-breakdown" class="mb-3">
-          <!-- Component bars (populated via JS) -->
-        </div>
-
-        <div id="why-details" class="mb-2">
-          <!-- Per-component collapsible details -->
-        </div>
+        <div id="why-breakdown" class="mb-3"></div>
+        <div id="why-details" class="mb-2"></div>
 
         <hr/>
         <div>
@@ -423,268 +306,262 @@
       </div>
 
       <div class="modal-footer">
-        <small class="text-muted me-auto">Scores are deterministic and explainable — each point maps to a signal. See data/weights.json for weight config.</small>
+        <small class="text-muted me-auto">Scores are deterministic & explainable. See <code>data/weights.json</code> for config.</small>
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
       </div>
     </div>
   </div>
 </div>
 
+{# ========== NEW: Combined Verify + CoC client script ========== #}
+<style>
+  /* small styles to make verify/coc result clearer */
+  .verify-ok { color: var(--accent); font-weight: 600; }
+  .verify-bad { color: #e67e22; font-weight: 600; }
+  .coc-list ul { margin: 0 0 0 18px; padding: 0; }
+  .coc-list li { margin: 6px 0; }
+</style>
 
-{# Inline JS: verify, show CoC, populate Why modal, animate bars #}
 <script>
 (function(){
-  
-  // Helper: small DOM create
-  function e(tag, attrs) {
-    const el = document.createElement(tag);
-    if (attrs) Object.keys(attrs).forEach(k => el.setAttribute(k, attrs[k]));
-    return el;
+  "use strict";
+
+  // helper to read data-* attributes safely
+  function getAttr(el, key){
+    return el.getAttribute('data-' + key) || (el.dataset && el.dataset[key]) || null;
   }
 
-  // Animate progress bars (on load)
-  function animateProgressBars(){
-    document.querySelectorAll('.progress-bar[data-width]').forEach(function(pb){
-      const w = pb.getAttribute('data-width') || 0;
-      // small timeout so CSS transition can be smooth
-      setTimeout(()=> pb.style.width = (parseInt(w,10) || 0) + '%', 50);
-    });
-  }
-
-  // Verify handler
-  // Verify handler (guarded against duplicates)
-  const __verifyInFlight = new Map(); // key: caseId+artId -> true
-
-  async function doVerify(caseId, artId, statusEl, callerTag) {
-    // guard key
-    const key = `${caseId}::${artId}`;
-
-    // If already in-flight, skip and log origin
-    if (__verifyInFlight.get(key) === true) {
-      console.warn(`doVerify skipped (in-flight) for ${key} — caller=${callerTag || 'unknown'}`);
-      // optionally show small UI hint
-      if (statusEl) {
-        const existing = statusEl.getAttribute('data-verify-recent') || '';
-        statusEl.setAttribute('data-verify-recent', (existing + '●').slice(-5));
-      }
+  // Render the verification result into a target node
+  function renderVerifyResult(aid, container, result){
+    if(!container) return;
+    container.innerHTML = '';
+    if(!result){
+      container.textContent = 'No result';
       return;
     }
 
-    __verifyInFlight.set(key, true);
-    if (statusEl) { statusEl.textContent = 'Checking…'; statusEl.style.color = ''; }
+    // success: metadata_hmac_ok === true and (if available) shas match
+    const okSig = !!result.metadata_hmac_ok;
+    const onDisk = result.on_disk_sha256 || null;
+    const computed = result.computed_sha256 || null;
 
-    try {
-      // Add small caller info to debug logs (useful when diagnosing double initiators)
-      console.log('verify request start', { caseId, artId, callerTag, ts: new Date().toISOString() });
-
-      const resp = await fetch(`/api/coc/verify/${encodeURIComponent(caseId)}/${encodeURIComponent(artId)}`);
-      let body;
-      try { body = await resp.json(); } catch (_) { body = await resp.text(); }
-
-      if (!resp.ok) {
-        if (statusEl) statusEl.innerHTML = `<span style="color:orange">verify failed</span>`;
-        console.warn('verify failed', body);
-        return;
+    if(okSig){
+      const okDiv = document.createElement('div');
+      okDiv.className = 'verify-ok';
+      okDiv.textContent = 'Metadata signature: OK ✓';
+      container.appendChild(okDiv);
+    } else {
+      const err = document.createElement('div');
+      err.className = 'verify-bad';
+      err.textContent = 'Metadata signature: MISMATCH';
+      container.appendChild(err);
+      if(result.metadata_hmac_details){
+        const md = document.createElement('div');
+        md.className = 'small text-muted';
+        md.textContent = 'Details: ' + (typeof result.metadata_hmac_details === 'string' ? result.metadata_hmac_details : JSON.stringify(result.metadata_hmac_details));
+        container.appendChild(md);
       }
+    }
 
-      const ok = (body && body.metadata_hmac_ok === true);
-      const onDisk = body && (body.on_disk_sha256 || null);
-      const computed = body && (body.computed_sha256 || null);
+    if(onDisk || computed){
+      const wrap = document.createElement('div');
+      wrap.className = 'small';
+      wrap.style.marginTop = '6px';
+      if(onDisk) wrap.innerHTML += 'on-disk SHA: <code>' + onDisk + '</code><br/>';
+      if(computed) wrap.innerHTML += 'computed SHA: <code>' + computed + '</code>';
+      container.appendChild(wrap);
+    }
 
-      if (!ok) {
-        if (statusEl) {
-          statusEl.innerHTML = `<strong style="color:#c00">META TAMPERED ✖</strong>`;
-          statusEl.title = JSON.stringify(body.metadata_hmac_details || {}, null, 2);
-        }
-        return;
-      }
-
-      if (onDisk && computed) {
-        if (onDisk === computed) {
-          if (statusEl) { statusEl.innerHTML = `<strong style="color:green">OK ✔</strong>`; statusEl.title = `sha256: ${computed}`; }
-        } else {
-          if (statusEl) { statusEl.innerHTML = `<strong style="color:#c00">HASH MISMATCH ✖</strong>`; statusEl.title = `manifest: ${onDisk}\ncomputed: ${computed}`; }
-        }
+    // show hash mismatch notice if both available and differ
+    if(onDisk && computed){
+      if(onDisk !== computed){
+        const mm = document.createElement('div');
+        mm.style.color = '#c0392b'; mm.style.fontWeight = '600';
+        mm.textContent = 'Hash mismatch — artifact contents differ from recorded SHA';
+        container.appendChild(mm);
       } else {
-        if (statusEl) { statusEl.innerHTML = `<strong style="color:green">META OK</strong>`; if (onDisk) statusEl.title = `manifest sha: ${onDisk}`; }
+        const mm = document.createElement('div');
+        mm.style.color = '#16a085'; mm.style.fontWeight = '600';
+        mm.textContent = 'Hash match — artifact contents match recorded SHA';
+        container.appendChild(mm);
       }
-    } catch (err) {
-      console.error('doVerify error', err);
-      if (statusEl) statusEl.innerHTML = `<span style="color:orange">error</span>`;
-    } finally {
-      // release guard after short delay so UI has time to update
-      setTimeout(() => {
-        __verifyInFlight.delete(key);
-        if (statusEl) { statusEl.setAttribute('data-verify-recent', ''); }
-      }, 300); // 300ms window — adjust if desired
     }
   }
 
-  // Fetch and display CoC entries
-  async function showCoC(caseId, artId, container){
-    container.innerHTML = 'Loading CoC…';
+  // Render CoC rows (simple list)
+  function renderCoCList(container, rows){
+    if(!container) return;
+    container.innerHTML = '';
+    if(!rows || rows.length === 0){
+      container.innerHTML = '<div class="text-muted small">No CoC entries</div>';
+      return;
+    }
+    const ul = document.createElement('ul');
+    rows.forEach(r => {
+      const li = document.createElement('li');
+      const ts = r.ts || r.ts_string || '';
+      const parts = [];
+      if(r.actor) parts.push('actor=' + r.actor);
+      if(r.action) parts.push('action=' + r.action);
+      if(r.location) parts.push('location=' + r.location);
+      if(r.details){
+        let d = r.details;
+        if(typeof d === 'object') d = JSON.stringify(d);
+        parts.push('details=' + d);
+      }
+      li.textContent = (ts ? (ts + ' — ') : '') + parts.join(' • ');
+      ul.appendChild(li);
+    });
+    container.appendChild(ul);
+  }
+
+  // find or create container for CoC for a button & id
+  function findCoCContainer(btn, aid){
     try {
-      const resp = await fetch(`/api/coc/${encodeURIComponent(caseId)}/${encodeURIComponent(artId)}`);
-      if (!resp.ok) {
-        const t = await resp.text();
-        container.innerHTML = `<span style="color:orange">failed to load CoC</span>`;
-        console.warn('CoC load failed', t);
+      const row = btn.closest('tr, .artifact-row, .event');
+      if(row){
+        const existing = row.querySelector('.coc-list');
+        if(existing) return existing;
+      }
+    } catch(e){ /* ignore */ }
+
+    const idCandidate = 'coc-list-' + aid;
+    const elById = document.getElementById(idCandidate);
+    if(elById) return elById;
+
+    // fallback: create and append after button
+    const fallback = document.createElement('div');
+    fallback.className = 'mt-2 small coc-list';
+    btn.parentNode && btn.parentNode.appendChild(fallback);
+    return fallback;
+  }
+
+  // main: fetch verification endpoint and render
+  async function doVerify(caseId, artId, container){
+    if(!caseId || !artId) return;
+    container = container || document.getElementById('verify-result-' + artId) || (function(){
+      // fallback create after the verify button if missing
+      const selector = '.verify-btn[data-case="'+caseId+'"][data-art="'+artId+'"]';
+      const btn = document.querySelector(selector);
+      if(!btn) return null;
+      const c = document.createElement('div'); c.className = 'mt-2 small'; btn.parentNode && btn.parentNode.appendChild(c);
+      return c;
+    })();
+    if(!container) return;
+
+    container.innerHTML = '<span class="text-muted">Verifying…</span>';
+    try {
+      const resp = await fetch('/api/coc/verify/' + encodeURIComponent(caseId) + '/' + encodeURIComponent(artId), { method:'GET', credentials:'same-origin' });
+      if(!resp.ok){
+        const text = await resp.text().catch(()=>String(resp.status));
+        container.innerHTML = '<span style="color:orange">verify failed: ' + (text||resp.status) + '</span>';
+        console.warn('verify failed', resp.status, text);
+        return;
+      }
+      const json = await resp.json();
+      renderVerifyResult(artId, container, json);
+    } catch(err){
+      console.error('verify error', err);
+      container.innerHTML = '<span style="color:orange">Verification failed</span>';
+    }
+  }
+
+  // fetch CoC list and render
+  async function loadCoC(caseId, artId, container){
+    if(!caseId || !artId) return;
+    container = container || document.getElementById('coc-list-' + artId) || (function(){
+      // fallback: try to find coc-list in same row
+      const selector = '.coc-btn[data-case="'+caseId+'"][data-art="'+artId+'"]';
+      const btn = document.querySelector(selector);
+      if(!btn) return null;
+      return findCoCContainer(btn, artId);
+    })();
+    if(!container) return;
+    container.innerHTML = '<span class="text-muted">Loading CoC…</span>';
+    try {
+      const resp = await fetch('/api/coc/' + encodeURIComponent(caseId) + '/' + encodeURIComponent(artId), { method:'GET', credentials:'same-origin' });
+      if(!resp.ok){
+        const text = await resp.text().catch(()=>String(resp.status));
+        container.innerHTML = '<span style="color:orange">failed to load CoC</span>';
+        console.warn('CoC load failed', resp.status, text);
         return;
       }
       const rows = await resp.json();
-      if (!rows || rows.length === 0) {
-        container.innerHTML = `<div class="text-muted small">No CoC entries</div>`;
-        return;
-      }
-      const ul = e('ul');
-      ul.className = 'small';
-      rows.forEach(r => {
-        const li = e('li');
-        let details = [];
-        if (r.actor) details.push(`actor=${r.actor}`);
-        if (r.action) details.push(`action=${r.action}`);
-        if (r.location) details.push(`location=${r.location}`);
-        if (r.details) details.push(`details=${r.details}`);
-        li.textContent = `${r.ts || r.ts} — ${details.join(' • ')}`;
-        ul.appendChild(li);
-      });
-      container.innerHTML = '';
-      container.appendChild(ul);
-    } catch (err) {
-      console.error(err);
-      container.innerHTML = `<span style="color:orange">error</span>`;
+      renderCoCList(container, rows);
+    } catch(err){
+      console.error('CoC fetch error', err);
+      container.innerHTML = '<span style="color:orange">failed to load CoC</span>';
     }
   }
 
-  // Populate Why modal from embedded data-analysis JSON on the clicked button
-  function hookWhyButtons(){
-    document.querySelectorAll('.why-btn').forEach(btn => {
+  // idempotent binding for verify and coc buttons under a root node
+  function attachHandlers(root){
+    root = root || document;
+    // verify buttons
+    root.querySelectorAll('.verify-btn').forEach(btn => {
+      if(btn.getAttribute('data-verify-bound') === '1') return;
+      btn.setAttribute('data-verify-bound','1');
       btn.addEventListener('click', function(ev){
-        try {
-          const art = btn.getAttribute('data-artifact');
-          const analysis = JSON.parse(btn.getAttribute('data-analysis') || '{}');
-
-          // Header
-          document.getElementById('why-artifact-id').textContent = art;
-          document.getElementById('why-score').textContent = analysis.final_score !== undefined ? analysis.final_score + '%' : '—';
-          // badge
-          const badge = document.getElementById('why-badge');
-          badge.innerHTML = '';
-          const b = document.createElement('span');
-          if ((analysis.final_score||0) >= 70) {
-            b.className = 'badge bg-danger';
-          } else if ((analysis.final_score||0) > 30) {
-            b.className = 'badge bg-warning text-dark';
-          } else {
-            b.className = 'badge bg-success';
-          }
-          b.textContent = 'Score';
-          badge.appendChild(b);
-
-          // breakdown bars
-          const breakdown = analysis.breakdown || {};
-          const comp = ['ioc','yara','heuristics'];
-          const brDiv = document.getElementById('why-breakdown');
-          brDiv.innerHTML = '';
-          comp.forEach(k => {
-            const v = ((breakdown[k] || 0) * 100) || (Math.round(((analysis.weights && analysis.weights[k])||0)*100));
-            const row = document.createElement('div');
-            row.className = 'mb-2';
-            row.innerHTML = `<div class="small text-muted">${k.toUpperCase()} (${v}%)</div>
-              <div class="progress" style="height:8px;"><div class="progress-bar" style="width: ${v}%"></div></div>`;
-            brDiv.appendChild(row);
-          });
-
-          // reasons
-          const reasons = analysis.reasons || [];
-          const reasonsEl = document.getElementById('why-reasons');
-          reasonsEl.innerHTML = '';
-          if (reasons.length === 0) {
-            const li = document.createElement('li'); li.textContent = 'No reasons available.'; reasonsEl.appendChild(li);
-          } else {
-            reasons.forEach(r => {
-              const li = document.createElement('li');
-              li.textContent = r;
-              reasonsEl.appendChild(li);
-            });
-          }
-
-          // detailed sections
-          const details = document.getElementById('why-details');
-          details.innerHTML = '';
-          if (analysis.ioc_matches && analysis.ioc_matches.length) {
-            const d = document.createElement('div');
-            d.innerHTML = `<strong>IOC Matches</strong><ul class="small mb-2">${analysis.ioc_matches.map(i=>`<li>${i.type||'ioc'}: ${i.value||i}</li>`).join('')}</ul>`;
-            details.appendChild(d);
-          }
-          if (analysis.yara_matches && analysis.yara_matches.length) {
-            const d = document.createElement('div');
-            d.innerHTML = `<strong>YARA Matches</strong><ul class="small mb-2">${analysis.yara_matches.map(y=>`<li>${y.rule||y}</li>`).join('')}</ul>`;
-            details.appendChild(d);
-          }
-          if (analysis.heuristics && Object.keys(analysis.heuristics||{}).length) {
-            const d = document.createElement('div');
-            d.innerHTML = `<strong>Heuristics</strong><pre class="small">${JSON.stringify(analysis.heuristics, null, 2)}</pre>`;
-            details.appendChild(d);
-          }
-
-          // copy json button
-          document.getElementById('copyWhyBtn').onclick = function(){
-            navigator.clipboard && navigator.clipboard.writeText(JSON.stringify(analysis, null, 2));
-            this.textContent = 'Copied';
-            setTimeout(()=> this.textContent = 'Copy JSON', 1500);
-          };
-        } catch (err) {
-          console.error(err);
+        try { ev.preventDefault(); ev.stopPropagation(); } catch(_) {}
+        const caseId = getAttr(btn, 'case');
+        const artId = getAttr(btn, 'art');
+        if(!caseId || !artId){
+          console.warn('verify button missing data-case/data-art', btn);
+          return;
         }
+
+        // find existing result container or create one
+        let resultEl = document.getElementById('verify-result-' + artId);
+        if(!resultEl){
+          const row = btn.closest('tr, .artifact-row, .event');
+          resultEl = row ? row.querySelector('#verify-result-' + artId) : null;
+        }
+        if(!resultEl){
+          resultEl = document.createElement('div');
+          resultEl.className = 'mt-2 small';
+          btn.parentNode && btn.parentNode.appendChild(resultEl);
+        }
+
+        doVerify(caseId, artId, resultEl);
+      });
+    });
+
+    // coc buttons
+    root.querySelectorAll('.coc-btn').forEach(btn => {
+      if(btn.getAttribute('data-coc-bound') === '1') return;
+      btn.setAttribute('data-coc-bound','1');
+      btn.addEventListener('click', function(ev){
+        try { ev.preventDefault(); ev.stopPropagation(); } catch(_) {}
+        const caseId = getAttr(btn, 'case');
+        const artId = getAttr(btn, 'art');
+        if(!caseId || !artId){
+          console.warn('coc button missing data-case/data-art', btn);
+          return;
+        }
+        const container = findCoCContainer(btn, artId);
+        loadCoC(caseId, artId, container);
       });
     });
   }
 
-    // Wire up verify and CoC buttons using event delegation
-  document.addEventListener('click', function(ev){
-    const vb = ev.target.closest('.verify-btn');
-    if (vb) {
-      // marker to show this element had a delegated click processed
-      vb.setAttribute('data-delegated', '1');
-
-      const caseId = vb.getAttribute('data-case');
-      const artId = vb.getAttribute('data-art');
-      const resultEl = document.getElementById('verify-result-' + artId);
-
-      // prefer to pass a callerTag to help debug duplicate initiators
-      // we detect if click had an explicit data-caller set (e.g., other modules) else mark 'dashboard'
-      const callerTag = vb.getAttribute('data-caller') || 'dashboard-inline';
-      doVerify(caseId, artId, resultEl, callerTag);
-      return;
-    }
-    const cb = ev.target.closest('.coc-btn');
-    if (cb) {
-      const caseId = cb.getAttribute('data-case');
-      const artId = cb.getAttribute('data-art');
-      const container = document.getElementById('coc-list-' + artId);
-      showCoC(caseId, artId, container);
-      return;
-    }
-  });
-
-
-  // on DOM ready: animate bars + hook Why buttons
+  // bootstrap on DOM ready
   document.addEventListener('DOMContentLoaded', function(){
-    animateProgressBars();
-    hookWhyButtons();
+    attachHandlers(document);
+    setTimeout(function(){ attachHandlers(document); }, 200);
   });
 
-  // also run on load in case DOMContentLoaded already fired
-  if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    setTimeout(function(){ animateProgressBars(); hookWhyButtons(); }, 50);
-  }
+  // observe DOM to attach to newly added buttons
+  const mo = new MutationObserver(function(muts){
+    // attach handlers to the whole document or the changed nodes
+    attachHandlers(document);
+  });
+  mo.observe(document.body, { childList: true, subtree: true });
 
+  // expose small debug helpers
+  window.TriageHelpers = window.TriageHelpers || {};
+  window.TriageHelpers.verify = doVerify;
+  window.TriageHelpers.loadCoC = loadCoC;
 })();
 </script>
-
-<!-- {# Optionally preserve your external loader if present; keep but it won't duplicate modal behavior #} -->
-<!-- <script src="{{ url_for('static', filename='js/artifacts_loader.js') }}"></script> -->
-<!-- <script>window.addEventListener('DOMContentLoaded', function(){ if(window.ArtifactsLoader) window.ArtifactsLoader.init("{{ case_id }}"); });</script> -->
 
 {% endblock %}

@@ -2,37 +2,69 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Cyber Triage Tool</title>
+  <title>{% block title %}Cyber Triage Tool{% endblock %}</title>
+
+  <!-- Bootstrap -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <!-- existing site styles (if any) -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 
+  <!-- SYNC5 Theme -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css') }}">
+
+  {% block head_extra %}{% endblock %}
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
 </head>
 <body>
-  <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-    <a class="navbar-brand ms-3" href="/">Cyber Triage Tool</a>
-    <div class="navbar-nav ms-auto me-3">
-      <a class="nav-link" href="/dashboard">Dashboard</a>
-      <a class="nav-link" href="/timeline">Timeline</a>
-      <a class="nav-link" href="/report">Report</a>
+  <nav class="navbar navbar-expand-lg">
+    <div class="container-fluid">
+      <a class="navbar-brand ms-3" href="/"><span style="color:var(--accent)">SYNC</span><span style="color:var(--text)">5</span></a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#topNav" aria-controls="topNav" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+
+      <div class="collapse navbar-collapse" id="topNav">
+        <ul class="navbar-nav me-auto mb-2 mb-lg-0 ms-3">
+          <li class="nav-item"><a class="nav-link" href="/upload">Upload</a></li>
+          <li class="nav-item"><a class="nav-link" href="/dashboard">Dashboard</a></li>
+          <li class="nav-item"><a class="nav-link" href="/timeline">Timeline</a></li>
+          <li class="nav-item"><a class="nav-link" href="/report">Report</a></li>
+        </ul>
+
+        <div class="d-flex align-items-center me-3">
+          <a class="btn btn-outline-primary rounded-pill me-3" href="/login">Login</a>
+          <a class="btn btn-outline-primary rounded-pill me-3" href="/signup">Sign Up</a>
+  
+        </div>
+      </div>
     </div>
   </nav>
-  
-  <div class="container mt-4">
-    {% block content %}{% endblock %}
-  </div>
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-  <script>
-document.addEventListener('DOMContentLoaded', function () {
-  document.querySelectorAll('.progress-bar[data-width]').forEach(function(el){
-    var v = parseInt(el.getAttribute('data-width'), 10);
-    if (isNaN(v)) v = 0;
-    if (v < 0) v = 0;
-    if (v > 100) v = 100;
-    el.style.width = v + '%';
-    el.setAttribute('aria-valuenow', v);
-  });
-});
-</script>
 
+  <main class="container mt-4 mb-5">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="text-center small muted py-3">
+    &copy; {{ now().year if now is defined else "" }} Cyber Triage Tool — tamper-proof evidence & explainable scoring
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+  <!-- small helper to animate bars that use data-width (keeps existing behavior) -->
+  <script>
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('.progress-bar[data-width]').forEach(function(el){
+      var v = parseInt(el.getAttribute('data-width'), 10);
+      if (isNaN(v)) v = 0;
+      if (v < 0) v = 0;
+      if (v > 100) v = 100;
+      el.style.width = v + '%';
+      el.setAttribute('aria-valuenow', v);
+    });
+  });
+  </script>
+
+  {% block body_extra %}{% endblock %}
 </body>
 </html>

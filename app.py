@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 # --- Heuristics integration imports ---
 from werkzeug.utils import secure_filename
 from modules import utils as mutils
+from functools import wraps
+from flask import session, redirect, url_for, request, jsonify
 
 from modules.utils import (
     write_signed_metadata,
@@ -97,17 +99,61 @@ with app.app_context():
 register_reporting_routes(app)
 
 # --- safe import & register of timeline blueprint (idempotent) ---
+# --- import timeline blueprint (do NOT register it yet; register after adding hooks) ---
 try:
     from modules.timeline import bp as timeline_bp
-    if timeline_bp.name not in app.blueprints:
-        app.register_blueprint(timeline_bp)
-    else:
-        logger.debug("Timeline blueprint '%s' already registered — skipping.", timeline_bp.name)
 except Exception:
-    logger.exception("modules.timeline import/register failed; timeline routes will be disabled")
+    timeline_bp = None
+    logger.exception("modules.timeline import failed; timeline routes will be disabled")
+
 
 import re
 CASE_ID_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
+
+import pytz
+# --- AUTH helpers (add near other imports) ---
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
+from flask import session, g
+
+# Ensure a secret key is configured for session cookies
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-me")
+
+# path for simple user store (dev use only)
+USERS_JSON = os.path.join(DATA_DIR, "users.json")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# Custom Jinja filter to convert UTC → IST
+@app.template_filter("ist_time")
+def ist_time_filter(value):
+    """
+    Convert an ISO datetime string or datetime object (UTC) into IST (24h format).
+    Example output: 04-10-2025 10:03:54 IST
+    """
+    if not value:
+        return "-"
+    try:
+        if isinstance(value, str):
+            # handle ISO8601 with Z
+            if value.endswith("Z"):
+                value = value[:-1]
+            dt = datetime.fromisoformat(value)
+        elif isinstance(value, datetime):
+            dt = value
+        else:
+            return str(value)
+
+        # assume UTC if naive
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=pytz.UTC)
+
+        # convert to IST
+        ist = pytz.timezone("Asia/Kolkata")
+        dt_ist = dt.astimezone(ist)
+
+        return dt_ist.strftime("%d-%m-%Y %H:%M:%S IST")
+    except Exception:
+        return str(value)
 
 def safe_case_id(case_id):
     if not CASE_ID_RE.match(case_id):
@@ -190,16 +236,338 @@ def add_artifact_to_manifest(case_id, artifact_metadata):
     save_manifest(case_id, manifest)
     return manifest
 
+def load_users():
+    """Return dict username -> user-dict {email, password_hash}"""
+    try:
+        if os.path.exists(USERS_JSON):
+            with open(USERS_JSON, "r", encoding="utf-8") as fh:
+                return json.load(fh)
+    except Exception:
+        logger.exception("Failed loading users.json")
+    return {}
 
+def save_users(users):
+    try:
+        tmp = USERS_JSON + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(users, fh, indent=2)
+        os.replace(tmp, USERS_JSON)
+    except Exception:
+        logger.exception("Failed saving users.json")
+
+def login_required(view_fn):
+    """
+    Protect a normal HTML route: redirect to /login if not authenticated.
+    Preserves the requested path in ?next= so login can return the user.
+    """
+    @wraps(view_fn)
+    def wrapped(*args, **kwargs):
+        if not session.get("user"):
+            # preserve intended path so login can redirect back
+            return redirect(url_for('login', next=request.path))
+        return view_fn(*args, **kwargs)
+    return wrapped
+
+
+def api_login_required(view_fn):
+    """
+    Protect an API route that returns JSON: respond 401 with JSON instead of redirect.
+    Use on endpoints that expect JSON (optional).
+    """
+    @wraps(view_fn)
+    def wrapped(*args, **kwargs):
+        if not session.get("user"):
+            return jsonify({"error": "authentication required"}), 401
+        return view_fn(*args, **kwargs)
+    return wrapped
+
+
+# ---------- Add these helper functions near your manifest helpers ----------
+def list_cases():
+    """
+    Return a list of available case IDs. Prefer DB rows; fallback to evidence/ and data/ folders.
+    Always returns a list (possibly empty).
+    """
+    cases = []
+    try:
+        # prefer DB Case rows if available
+        try:
+            rows = Case.query.order_by(Case.created_at.desc()).all()
+            for r in rows:
+                # ensure we return plain strings (case_id)
+                cid = getattr(r, "case_id", None)
+                if cid:
+                    cases.append(cid)
+        except Exception:
+            # DB might not be available; ignore and fallback
+            pass
+
+        # also supplement with any subfolders under evidence/ or data/
+        for base in (app.config.get("UPLOAD_FOLDER", "evidence"), os.path.join(PROJECT_ROOT, "data")):
+            try:
+                if os.path.exists(base):
+                    for name in sorted(os.listdir(base)):
+                        p = os.path.join(base, name)
+                        if os.path.isdir(p) and name not in cases:
+                            cases.append(name)
+            except Exception:
+                continue
+    except Exception:
+        logger.exception("list_cases helper failed; returning []")
+    # dedupe and return
+    seen = set(); out = []
+    for c in cases:
+        if c and c not in seen:
+            seen.add(c); out.append(c)
+    return out
+
+
+def _normalize_event(ev):
+    """
+    Ensure event is JSON-serializable and fields have consistent names:
+      - timestamp -> ISO string in UTC (if present) or None
+      - score -> numeric (prefer final_score or suspicion_score)
+      - type, source, file_name, artifact_id, json -> stable keys
+    """
+    out = {}
+    try:
+        # timestamp normalization: accept ISO strings or datetime objects
+        ts = ev.get("timestamp") or ev.get("ts") or ev.get("uploaded_at") or ev.get("time") or ev.get("ts_utc")
+        if isinstance(ts, datetime):
+            # ensure ISO and append Z as UTC marker if tzinfo None assume UTC
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            out["timestamp"] = ts.astimezone(timezone.utc).isoformat()
+        elif isinstance(ts, str) and ts:
+            # try to normalize simple strings
+            s = ts
+            # preserve as-is if it looks like ISO, else attempt safe conversion
+            try:
+                if s.endswith("Z"):
+                    s2 = s
+                else:
+                    # attempt parse and reformat with ISO + Z
+                    dt = datetime.fromisoformat(s)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    s2 = dt.astimezone(timezone.utc).isoformat()
+                out["timestamp"] = s2
+            except Exception:
+                out["timestamp"] = s
+        else:
+            out["timestamp"] = None
+    except Exception:
+        out["timestamp"] = None
+
+    # score: try several keys, coerce to number or None
+    score = None
+    try:
+        for k in ("score", "final_score", "suspicion_score", "finalScore"):
+            v = ev.get(k)
+            if v is not None:
+                try:
+                    score = int(v)
+                except Exception:
+                    try:
+                        score = float(v)
+                    except Exception:
+                        score = None
+                break
+    except Exception:
+        score = None
+    out["score"] = score if score is not None else 0
+
+    # simple passthrough fields
+    out["type"] = ev.get("type") or ev.get("event_type") or ev.get("action") or "event"
+    out["source"] = ev.get("source") or ev.get("actor") or ev.get("uploader") or ev.get("provider") or None
+    out["file_name"] = ev.get("file_name") or ev.get("original_filename") or ev.get("saved_filename") or ev.get("artifact_name") or None
+    out["artifact_id"] = ev.get("artifact_id") or ev.get("id") or ev.get("artifact") and (ev.get("artifact").get("artifact_id") if isinstance(ev.get("artifact"), dict) else None) or None
+
+    # keep a JSON-safe payload (small)
+    payload = ev.get("details") or ev.get("analysis") or ev.get("payload") or ev.get("artifact") or {}
+    try:
+        # reduce large binary-ish fields; ensure serialization
+        if isinstance(payload, (dict, list)) or payload is None:
+            out["json"] = payload or {}
+        else:
+            out["json"] = {"value": str(payload)}
+    except Exception:
+        out["json"] = {}
+
+    # include original raw event for debugging (lightweight)
+    out["_raw_summary"] = {k: ev.get(k) for k in ("id", "type", "artifact_id") if ev.get(k) is not None}
+    return out
+
+
+def get_events_for_case(case_id, keep_na=False):
+    """
+    Robust loader for per-case events. Returns a list of normalized event dicts.
+    - Reads data/<case_id>/events.json when available and normalizes entries.
+    - If not present, tries to synthesize minimal events from manifest.json / DB artifacts.
+    - Always returns a list (possibly empty).
+    """
+    safe = case_id
+    out = []
+    try:
+        # 1) try data/<case_id>/events.json (common generated timeline)
+        events_path = os.path.join("data", safe, "events.json")
+        if os.path.exists(events_path):
+            try:
+                with open(events_path, "r", encoding="utf-8") as fh:
+                    j = json.load(fh)
+                # some timeline generators wrap under "timeline" or "timeline_preview"
+                candidates = []
+                if isinstance(j, dict):
+                    # accept lists directly under known keys or the dict itself as a list if it is a list-like object
+                    for key in ("timeline", "events", "timeline_preview", "items"):
+                        if isinstance(j.get(key), list):
+                            candidates = j.get(key)
+                            break
+                    # if still empty but dict contains list-ish entries, try j.get("events") fallback
+                    if not candidates:
+                        # maybe the top-level is already a list-shaped object keyed by something
+                        # fallback: if j has "events" as dict with "items" member
+                        if isinstance(j.get("events"), list):
+                            candidates = j.get("events")
+                if not candidates and isinstance(j, list):
+                    candidates = j
+                if not candidates and isinstance(j, dict):
+                    # try to see if timeline_preview is a list
+                    if isinstance(j.get("timeline_preview"), list):
+                        candidates = j.get("timeline_preview")
+                # if nothing found, treat top-level as list if possible
+                if not candidates and isinstance(j, list):
+                    candidates = j
+
+                # normalize each candidate into a stable event shape
+                for ev in (candidates or []):
+                    if not isinstance(ev, dict):
+                        continue
+                    out.append(_normalize_event(ev))
+                # if events were present, return them
+                if out:
+                    return out
+            except Exception:
+                logger.exception("Failed parsing events.json for %s", safe)
+
+        # 2) fallback: synthesize events from manifest.json or DB artifact list
+        manifest = load_manifest(safe)
+        for art in manifest.get("artifacts", []) or []:
+            ev = {
+                "type": "artifact_manifest",
+                "artifact_id": art.get("artifact_id") or art.get("saved_filename"),
+                "original_filename": art.get("original_filename") or art.get("saved_filename"),
+                "saved_path": art.get("saved_path"),
+                "timestamp": art.get("uploaded_at") or art.get("created_at") or art.get("uploadedAt"),
+                "score": art.get("suspicion_score") or (art.get("analysis") or {}).get("final_score"),
+                "details": art.get("analysis") or {}
+            }
+            out.append(_normalize_event(ev))
+
+        # 3) DB fallback: if manifest empty, use DB artifact rows (best-effort)
+        if not out:
+            try:
+                arts = Artifact.query.filter_by(case_id=safe).order_by(Artifact.uploaded_at.asc()).all()
+                for a in arts:
+                    try:
+                        d = a.to_dict() if hasattr(a, "to_dict") else {
+                            "artifact_id": getattr(a, "artifact_id", None),
+                            "original_filename": getattr(a, "original_filename", None),
+                            "saved_filename": getattr(a, "saved_filename", None),
+                            "uploaded_at": getattr(a, "uploaded_at").isoformat() + "Z" if getattr(a, "uploaded_at", None) else None,
+                            "analysis": json.loads(getattr(a, "analysis")) if getattr(a, "analysis", None) else {}
+                        }
+                    except Exception:
+                        d = {"artifact_id": getattr(a, "artifact_id", None), "original_filename": getattr(a, "original_filename", None)}
+                    ev = {
+                        "type": "artifact_db",
+                        "artifact_id": d.get("artifact_id"),
+                        "original_filename": d.get("original_filename"),
+                        "timestamp": d.get("uploaded_at"),
+                        "score": (d.get("analysis") or {}).get("final_score"),
+                        "details": d.get("analysis") or {}
+                    }
+                    out.append(_normalize_event(ev))
+            except Exception:
+                # ignore DB errors
+                logger.debug("DB fallback for events failed for %s", safe)
+    except Exception:
+        logger.exception("get_events_for_case failed for %s", case_id)
+
+    # final guard: ensure list and JSON-serializable types
+    final = []
+    for e in out:
+        try:
+            # ensure 'json' field is a dict
+            if not isinstance(e.get("json"), (dict, list)):
+                e["json"] = {"value": str(e.get("json") or "")}
+            # ensure score is numeric
+            try:
+                e["score"] = int(e.get("score")) if e.get("score") is not None else 0
+            except Exception:
+                try:
+                    e["score"] = int(float(e.get("score")))
+                except Exception:
+                    e["score"] = 0
+            final.append(e)
+        except Exception:
+            continue
+    return final
+# ---------- end helper functions ----------
+# after: from modules.timeline import bp as timeline_bp
+# BEFORE: app.register_blueprint(timeline_bp)
+
+# protect everything inside the timeline blueprint
+@timeline_bp.before_request
+def require_login_for_timeline_bp():
+    # allow blueprint static assets (if the blueprint registers static)
+    if request.endpoint and request.endpoint.startswith(f"{timeline_bp.name}.static"):
+        return None
+
+    # allow any public endpoints you intentionally left on this blueprint
+    # e.g. if you have timeline_bp.view_functions names to exempt:
+    PUBLIC_TIMELINE_ENDPOINTS = {
+        # f"{timeline_bp.name}.public_ping",
+    }
+    if request.endpoint in PUBLIC_TIMELINE_ENDPOINTS:
+        return None
+
+    # authenticated?
+    if session.get("user"):
+        return None
+
+    # If the client expects JSON (AJAX/API), return 401 JSON instead of redirect.
+    wants_json = request.accept_mimetypes.best in ("application/json", "application/javascript") or request.path.startswith("/api/")
+    if wants_json:
+        return jsonify({"error": "authentication required"}), 401
+
+    # otherwise redirect to login and preserve next path
+    return redirect(url_for("login", next=request.path))
+
+# Now register the timeline blueprint (after the hook is attached)
+if timeline_bp and timeline_bp.name not in app.blueprints:
+    app.register_blueprint(timeline_bp)
+    logger.debug("Timeline blueprint '%s' registered with login guard.", timeline_bp.name)
+
+from modules.auth import bp as auth_bp
+app.register_blueprint(auth_bp)
 # -------------------------
 # Routes
 # -------------------------
+
 @app.route("/")
 def home():
+    return render_template("home.html")
+
+# Serve the upload form via GET so the browser can visit /upload
+@app.route("/upload", methods=["GET"])
+@login_required
+def upload_page():
+    # render the upload form template
     return render_template("upload.html")
 
-
 @app.route("/upload", methods=["POST"])
+@login_required
 def upload_file():
     """
     Save file to disk (modules.utils.save_uploaded_file), compute SHA-256,
@@ -1120,6 +1488,7 @@ def api_upload_timeline():
 
 
 @app.route("/dashboard")
+@login_required
 def dashboard():
     """
     Dashboard: show case-level info (from DB) and artifacts list.
@@ -1159,8 +1528,21 @@ def dashboard():
         cases=cases_list,           # <-- new: pass all cases
     )
 
+@app.route("/api/cases/<case_id>/events")
+def case_events(case_id):
+    events = get_events_for_case(case_id)  # must return list of dicts with serializable values
+    return jsonify(events)
+
+@app.route("/timeline")
+@login_required
+def timeline():
+    cases = list_cases()  # e.g. ["case001", "case002"]
+    case_id = request.args.get("case_id", cases[0] if cases else "")
+    return render_template("timeline.html", case_id=case_id, cases=cases)
+
 
 @app.route("/report")
+@login_required
 def report():
     """
     Report preview: collect case & artifacts from DB (preferred) or manifest (fallback)
@@ -1462,6 +1844,7 @@ def _render_report_html(case_id):
         raise
 
 @app.route("/report/bundle/<case_id>")
+@login_required
 def report_bundle_redirect(case_id):
     """
     Temporary compatibility redirect: forward legacy /report/bundle/<case_id>
@@ -1480,6 +1863,7 @@ def report_bundle_redirect(case_id):
 
 
 @app.route("/report/pdf/<case_id>")
+@login_required
 def report_pdf(case_id):
     """
     Render the report template and attempt to convert to PDF on-the-fly.
@@ -1540,6 +1924,7 @@ def report_pdf(case_id):
 
 
 @app.route("/report/bundle/<case_id>")
+@login_required
 def report_bundle(case_id):
     """
     Serve an existing case zip if present, otherwise build a zip containing
@@ -1811,6 +2196,7 @@ def api_db_case(case_id):
 
 
 @app.route("/api/db/artifacts/<case_id>")
+@api_login_required
 def api_db_artifacts(case_id):
     rows = Artifact.query.filter_by(case_id=case_id).all()
     return jsonify([r.to_dict() for r in rows])
@@ -2292,58 +2678,331 @@ from flask import render_template
 from modules.models import ChainOfCustody  # already imported earlier in your file
 import sqlite3, json
 
+
+from datetime import datetime, timezone, timedelta
 @app.route("/coc/case/<case_id>")
 def view_case_coc(case_id):
     """
     Render case-level Chain-of-Custody / audit entries aggregated for the case.
-    This is defensive: it queries DB rows and converts them to plain dicts for the template.
+    Shows timestamps converted to IST and includes artifact filename (if available).
     """
     try:
-        # Primary: query ChainOfCustody ORM rows if model is available
+        entries = []
+
+        # Primary: use ORM if available
         try:
             rows = ChainOfCustody.query.filter_by(case_id=case_id).order_by(ChainOfCustody.ts.asc()).all()
-            entries = [r.to_dict() if hasattr(r, "to_dict") else {
-                "id": getattr(r, "id", None),
-                "ts": getattr(r, "ts", None).isoformat() + "Z" if getattr(r, "ts", None) else None,
-                "case_id": getattr(r, "case_id", None),
-                "artifact_id": getattr(r, "artifact_id", None),
-                "actor": getattr(r, "actor", None),
-                "action": getattr(r, "action", None),
-                "details": (json.loads(getattr(r, "details")) if getattr(r, "details") else None)
-            } for r in rows]
+            for r in rows:
+                try:
+                    # ts -> IST 24h format "YYYY-MM-DD HH:MM:SS"
+                    raw_ts = getattr(r, "ts", None)
+                    ist_ts = None
+                    if raw_ts:
+                        try:
+                            if isinstance(raw_ts, str):
+                                # try parse ISO string (handle trailing Z)
+                                s = raw_ts
+                                if s.endswith("Z"):
+                                    s = s[:-1]
+                                raw_dt = datetime.fromisoformat(s)
+                                # assume UTC if naive
+                                if raw_dt.tzinfo is None:
+                                    raw_dt = raw_dt.replace(tzinfo=timezone.utc)
+                            elif isinstance(raw_ts, datetime):
+                                raw_dt = raw_ts if raw_ts.tzinfo is not None else raw_ts.replace(tzinfo=timezone.utc)
+                            else:
+                                raw_dt = None
+
+                            if raw_dt is not None:
+                                ist_tz = timezone(timedelta(hours=5, minutes=30))
+                                ist_dt = raw_dt.astimezone(ist_tz)
+                                ist_ts = ist_dt.strftime("%Y-%m-%d %H:%M:%S")
+                        except Exception:
+                            ist_ts = getattr(r, "ts", None)
+                    else:
+                        ist_ts = None
+                except Exception:
+                    ist_ts = getattr(r, "ts", None)
+
+                # Try to obtain filename from Artifact table (best-effort)
+                filename = None
+                try:
+                    art = Artifact.query.filter_by(artifact_id=r.artifact_id, case_id=case_id).first()
+                    if art:
+                        filename = getattr(art, "original_filename", None) or getattr(art, "saved_filename", None)
+                except Exception:
+                    filename = None
+
+                # parse details JSON if present
+                details_val = None
+                try:
+                    details_raw = getattr(r, "details", None)
+                    if details_raw:
+                        if isinstance(details_raw, str):
+                            try:
+                                details_val = json.loads(details_raw)
+                            except Exception:
+                                details_val = details_raw
+                        else:
+                            details_val = details_raw
+                except Exception:
+                    details_val = None
+
+                entries.append({
+                    "id": getattr(r, "id", None),
+                    "ts": ist_ts,
+                    "case_id": getattr(r, "case_id", None),
+                    "artifact_id": getattr(r, "artifact_id", None),
+                    "filename": filename,
+                    "actor": getattr(r, "actor", None),
+                    "action": getattr(r, "action", None),
+                    "details": details_val,
+                    "signature": getattr(r, "signature", None)
+                })
         except Exception:
-            # If ORM call fails for some reason, fallback to direct sqlite query (robust)
+            # ORM failed -> sqlite fallback with LEFT JOIN to artifacts for filename
             entries = []
             db_path = os.path.join(PROJECT_ROOT, "data", "triage.db")
             try:
                 con = sqlite3.connect(db_path)
                 cur = con.cursor()
-                cur.execute("SELECT id, ts, case_id, artifact_id, actor, action, details FROM chain_of_custody WHERE case_id=? ORDER BY ts ASC", (case_id,))
-                for id_, ts, caseid, aid, actor, action, details in cur.fetchall():
-                    # normalize details (try parse json)
+                # left join artifacts to fetch a.original_filename when available
+                cur.execute("""
+                    SELECT c.id, c.ts, c.case_id, c.artifact_id,
+                           a.original_filename, a.saved_filename,
+                           c.actor, c.action, c.details, c.signature
+                    FROM chain_of_custody c
+                    LEFT JOIN artifacts a ON a.artifact_id = c.artifact_id AND a.case_id = c.case_id
+                    WHERE c.case_id = ?
+                    ORDER BY c.ts ASC
+                """, (case_id,))
+                rows = cur.fetchall()
+                for row in rows:
+                    # row: id, ts, case_id, artifact_id, original_filename, saved_filename, actor, action, details, signature
                     try:
-                        d = json.loads(details) if details else None
+                        id_, ts_raw, caseid, aid, orig_fn, saved_fn, actor, action, details_raw, signature = row
+                    except ValueError:
+                        # fallback for different schema
+                        id_, ts_raw, caseid, aid, actor, action, details_raw = row
+                        orig_fn = saved_fn = signature = None
+
+                    # normalize timestamp to IST string
+                    ist_ts = None
+                    try:
+                        if ts_raw:
+                            if isinstance(ts_raw, bytes):
+                                ts_raw = ts_raw.decode('utf-8', errors='ignore')
+                            if isinstance(ts_raw, str):
+                                s = ts_raw
+                                if s.endswith("Z"):
+                                    s = s[:-1]
+                                try:
+                                    dt = datetime.fromisoformat(s)
+                                    if dt.tzinfo is None:
+                                        dt = dt.replace(tzinfo=timezone.utc)
+                                    ist_dt = dt.astimezone(timezone(timedelta(hours=5, minutes=30)))
+                                    ist_ts = ist_dt.strftime("%Y-%m-%d %H:%M:%S")
+                                except Exception:
+                                    # try parsing as plain string fallback
+                                    ist_ts = ts_raw
+                            else:
+                                # numeric or other type: stringify
+                                ist_ts = str(ts_raw)
+                        else:
+                            ist_ts = None
                     except Exception:
-                        d = details
+                        ist_ts = ts_raw
+
+                    # choose filename preferring original_filename then saved_filename
+                    filename = orig_fn or saved_fn or None
+
+                    # parse details JSON if possible
+                    details_val = None
+                    try:
+                        if details_raw:
+                            if isinstance(details_raw, str):
+                                details_val = json.loads(details_raw)
+                            else:
+                                details_val = details_raw
+                    except Exception:
+                        details_val = details_raw
+
                     entries.append({
                         "id": id_,
-                        "ts": ts,
+                        "ts": ist_ts,
                         "case_id": caseid,
                         "artifact_id": aid,
+                        "filename": filename,
                         "actor": actor,
                         "action": action,
-                        "details": d
+                        "details": details_val,
+                        "signature": signature
                     })
                 con.close()
             except Exception:
+                # final fallback: empty list
                 entries = []
 
         return render_template("coc_case.html", case_id=case_id, entries=entries)
     except Exception:
         logger.exception("Failed to render case-level CoC for %s", case_id)
-        # render template but ensure entries is a list (template handles empty)
         return render_template("coc_case.html", case_id=case_id, entries=[]), 500
 
+
+# ----------------------------
+# Signup helper
+# ----------------------------
+import re
+from werkzeug.security import generate_password_hash
+from werkzeug.utils import secure_filename
+import uuid
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+def _is_strong_password(pw: str) -> bool:
+    """Basic policy: at least 12 chars. Extend as needed."""
+    if not pw:
+        return False
+    if len(pw) < 12:
+        return False
+    return True
+
+def create_user_from_signup_form(req, data_dir=DATA_DIR):
+    """
+    Validate request.form / request.files coming from your signup template,
+    save uploaded files into data/users_uploads/<email>/ and persist the user
+    into users.json via save_users().
+    Returns the saved user_record dict on success.
+
+    Raises ValueError on validation errors.
+    """
+    # fields
+    full_name = (req.form.get("fullName") or "").strip()
+    rank = (req.form.get("rank") or "").strip()
+    department = (req.form.get("department") or "").strip()
+    badge = (req.form.get("badge") or "").strip()
+    email = (req.form.get("email") or "").strip().lower()
+    mobile = (req.form.get("mobile") or "").strip()
+    emergency = (req.form.get("emergency") or "").strip()
+    supervisor = (req.form.get("supervisorEmail") or "").strip().lower()
+    jurisdiction = (req.form.get("jurisdiction") or "").strip()
+    specialization = (req.form.get("specialization") or "").strip()
+    password = req.form.get("password") or ""
+    password_confirm = req.form.get("passwordConfirm") or ""
+    sec_question = (req.form.get("secQuestion") or "").strip()
+
+    # files
+    id_upload = req.files.get("idUpload")
+    pki_upload = req.files.get("pki")
+
+    # validation
+    if not email:
+        raise ValueError("Email is required.")
+    if not EMAIL_RE.match(email):
+        raise ValueError("Invalid email address.")
+    if not password:
+        raise ValueError("Password is required.")
+    if password != password_confirm:
+        raise ValueError("Passwords do not match.")
+    if not _is_strong_password(password):
+        raise ValueError("Password must be at least 12 characters long.")
+
+    # ensure uniqueness
+    users = load_users()
+    if email in users:
+        raise ValueError("An account already exists with that email.")
+
+    # save uploads
+    user_dir = os.path.join(data_dir, "users_uploads", email.replace("@", "_"))
+    os.makedirs(user_dir, exist_ok=True)
+
+    id_path = None
+    if id_upload and id_upload.filename:
+        filename = secure_filename(id_upload.filename)
+        ext = os.path.splitext(filename)[1]
+        id_path = os.path.join(user_dir, f"official_id_{uuid.uuid4().hex}{ext}")
+        id_upload.save(id_path)
+
+    pki_path = None
+    if pki_upload and pki_upload.filename:
+        filename = secure_filename(pki_upload.filename)
+        ext = os.path.splitext(filename)[1]
+        pki_path = os.path.join(user_dir, f"public_key_{uuid.uuid4().hex}{ext}")
+        pki_upload.save(pki_path)
+
+    # build user record
+    user_record = {
+        "full_name": full_name,
+        "rank": rank,
+        "department": department,
+        "badge": badge,
+        "email": email,
+        "mobile": mobile,
+        "emergency": emergency,
+        "supervisor_email": supervisor,
+        "jurisdiction": jurisdiction,
+        "specialization": specialization,
+        "password_hash": generate_password_hash(password),
+        "security_question_answer": sec_question,
+        "id_upload": id_path,
+        "pki_upload": pki_path,
+        "created_at": datetime.utcnow().isoformat() + "Z"
+    }
+
+    # persist
+    users[email] = user_record
+    save_users(users)
+
+    return user_record
+
+# --- Investigator Signup Helper ---
+
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    if request.method == "POST":
+        try:
+            create_user_from_signup_form(request)
+        except ValueError as e:
+            flash(str(e), "danger")
+            return redirect(request.url)
+        except Exception:
+            logger.exception("Unexpected error during signup")
+            flash("Unexpected error, please try again later.", "danger")
+            return redirect(request.url)
+
+        flash("Account created successfully! You can now sign in.", "success")
+        return redirect(url_for("login"))
+
+    return render_template("signup.html")
+
+
+@app.route("/login", methods=["GET", "POST"], endpoint="login")
+def login():
+    # support redirect back to next if provided
+    next_url = request.args.get("next") or request.form.get("next") or url_for("dashboard")
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+        password = (request.form.get("password") or "").strip()
+        users = load_users()
+        u = users.get(email)
+        if u and check_password_hash(u.get("password_hash", ""), password):
+            session["user"] = {"email": email}
+            flash("Signed in", "success")
+            # safe redirect: don't redirect to external hosts
+            if next_url and next_url.startswith("/"):
+                return redirect(next_url)
+            return redirect(url_for("dashboard"))
+        else:
+            flash("Invalid credentials", "danger")
+        # fallthrough to render template (GET-like)
+    return render_template("login.html", next=next_url)
+
+@app.route("/logout")
+def logout():
+    session.pop("user", None)
+    flash("Signed out", "info")
+    return redirect(url_for("login"))
 
 if __name__ == "__main__":
     app.run(debug=True)

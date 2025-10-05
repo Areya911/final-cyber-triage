@@ -1,4 +1,4 @@
-<!-- templates/report.html (UPDATED to match backend artifacts shape) -->
+<!-- templates/report.html (PDF-friendly, dark-themed report preview) -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -7,14 +7,11 @@
   <title>Case Report — {{ case_id }}</title>
 
   <style>
-    /* PDF-friendly, defensive layout */
-    body { font-family: "Helvetica", Arial, sans-serif; color: #111; margin: 24px; }
+    /* Keep PDF-friendly styling but visually aligned with the app */
+    body { font-family: "Helvetica", Arial, sans-serif; color: #111; margin: 24px; background: #fff; }
     header { border-bottom: 2px solid #ddd; padding-bottom: 8px; margin-bottom: 16px; }
     h1 { font-size: 20px; margin: 0 0 4px 0; }
     .meta { color: #555; font-size: 12px; margin-bottom: 12px; }
-    .btns { margin: 8px 0 14px 0; }
-    .btn { display:inline-block; padding:6px 10px; border-radius:4px; background:#2f855a; color:#fff; text-decoration:none; font-size:12px; margin-right:6px; }
-    .btn.secondary { background:#4a5568; }
     section { margin-bottom: 16px; }
     table { border-collapse: collapse; width: 100%; font-size: 12px; }
     th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
@@ -24,25 +21,22 @@
     .page-break { page-break-after: always; }
     .score { font-weight:700; color:#b03; }
     .raw-meta { font-family: monospace; font-size: 10px; white-space: pre-wrap; background:#fafafa; padding:6px; border-radius:4px; border:1px solid #eee; }
-    .empty-cell { color:#999; }
   </style>
 </head>
 <body>
   <header>
     <h1>Case Report — {{ case_id }}</h1>
     <div class="meta">
-      Generated: {{ generated_at if generated_at is defined else "-" }} ·
-      {% if processes_exists %} processes.csv present · {% endif %}
-      {% if events_exists %} events.json present {% endif %}
+  Generated: {{ generated_at | ist_time if generated_at is defined else "-" }} ·
+  {% if processes_exists %} processes.csv present · {% endif %}
+  {% if events_exists %} events.json present {% endif %}
+</div>
+
+
+    <div style="margin-top:8px;">
+      <a style="display:inline-block;padding:6px 10px;border-radius:6px;background:#2f855a;color:#fff;text-decoration:none;font-size:12px;margin-right:6px;" href="{{ url_for('report_pdf', case_id=case_id) }}">Download PDF</a>
+      <a style="display:inline-block;padding:6px 10px;border-radius:6px;background:#4a5568;color:#fff;text-decoration:none;font-size:12px;" href="{{ url_for('report_bundle', case_id=case_id) }}">Download Bundle (ZIP)</a>
     </div>
-
-    <div class="btns">
-      <!-- explicit URLs to the on-server endpoints that exist in app.py -->
-      <a class="btn" href="{{ url_for('report_pdf', case_id=case_id) }}">Download PDF</a>
-      <a class="btn secondary" href="{{ url_for('report_bundle', case_id=case_id) }}">Download ZIP (PDF + manifest)</a>
-    </div>
-
-
   </header>
 
   <section>
@@ -69,38 +63,29 @@
         </thead>
         <tbody>
           {% for a in artifacts %}
-          {# ---- begin: safer normalization (replace the old set-block) ---- #}
           {% set artifact_id = (a.get('artifact_id') if a is mapping else (a.artifact_id if a is defined and a.artifact_id is defined else None)) or (a.get('id') if a is mapping else None) or 'unknown' %}
           {% set filename = (a.get('original_filename') if a is mapping else (a.original_filename if a is defined and a.original_filename is defined else None)) or (a.get('saved_filename') if a is mapping else (a.saved_filename if a is defined and a.saved_filename is defined else None)) or 'unknown' %}
           {% set size_bytes = (a.get('size_bytes') if a is mapping else (a.size_bytes if a is defined and a.size_bytes is defined else None)) %}
           {% set uploaded_at = (a.get('uploaded_at') if a is mapping else (a.uploaded_at if a is defined and a.uploaded_at is defined else None)) %}
           {% set uploaded_by = (a.get('uploaded_by') if a is mapping else (a.uploaded_by if a is defined and a.uploaded_by is defined else None)) %}
           {% set analysis = (a.get('analysis') if a is mapping else (a.analysis if a is defined and a.analysis is defined else None)) %}
-          {% if analysis is none %}
-            {% set analysis = {} %}
-          {% endif %}
-          {% set final_score = (a.get('final_score') if a is mapping else (a.final_score if a is defined and a.final_score is defined else None)) %}
-          {# ---- end normalization ---- #}
-
+          {% if analysis is none %}{% set analysis = {} %}{% endif %}
+          {% set final_score = (analysis.get('final_score') if analysis is mapping else (a.get('final_score') if a is mapping else (a.final_score if a is defined and a.final_score is defined else None))) %}
           <tr>
             <td>
               <div><code>{{ artifact_id }}</code></div>
               <div class="muted">{{ filename }}</div>
             </td>
-
             <td class="small">
               {% if size_bytes %}{{ size_bytes }} bytes{% else %}-{% endif %}
             </td>
-
             <td class="small">
-              {% if uploaded_at %} {{ uploaded_at }} {% else %} - {% endif %}<br/>
+             {% if uploaded_at %} {{ uploaded_at | ist_time }} {% else %} - {% endif %}<br/>
               <span class="muted">{% if uploaded_by %}{{ uploaded_by }}{% else %}-{% endif %}</span>
             </td>
-
             <td class="small">
               {% if final_score is not none %}
                 <span class="score">
-                  {# Render score and ensure we don't double-add '%' #}
                   {% if final_score is string %}
                     {{ final_score }}{% if '%' not in final_score %}%{% endif %}
                   {% else %}
@@ -111,7 +96,6 @@
                 -
               {% endif %}
             </td>
-
             <td class="small">
               {% if analysis is mapping %}
                 {% if analysis.final_reasons %}
